@@ -1,0 +1,17 @@
+#
+# Minimal OpenSSL configuration, shipped with the app on purpose.
+#
+# Generating an EC keypair goes through OpenSSL's CONF layer, which looks for
+# openssl.cnf in a compiled-in location. Plenty of shared hosts do not have one
+# (krotze.com does not, and has no `openssl` binary either), and without it
+# openssl_pkey_new() returns false with "configuration file routines::no such
+# file" — even though the prime256v1 curve itself is perfectly available.
+#
+# Every OpenSSL key call in App\Support\WebPush passes this file explicitly via
+# the `config` option, so key generation behaves the same everywhere.
+#
+
+[ req ]
+distinguished_name = req_distinguished_name
+
+[ req_distinguished_name ]

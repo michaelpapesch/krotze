@@ -1,0 +1,10 @@
+User-agent: *
+# Private or per-user areas: nothing to index there.
+Disallow: /admin
+Disallow: /api/
+Disallow: /u/
+# The public API reference stays crawlable.
+Allow: /api/docs
+Allow: /api/openapi.json
+
+Sitemap: https://krotze.com/sitemap.xml
