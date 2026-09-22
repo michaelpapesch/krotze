@@ -1,0 +1,40 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+
+@theme {
+    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+/*
+ * The chat shell is exactly as tall as the *visual* viewport, which shrinks
+ * when the on-screen keyboard opens — so the keyboard pushes the composer and
+ * the message list up instead of covering them. `--app-h` is kept in sync by
+ * syncViewport() in app.js; the 100dvh fallback covers browsers without
+ * visualViewport.
+ */
+#app {
+    height: var(--app-h, 100dvh);
+    overflow: hidden;
+    overscroll-behavior: none;
+}
+
+/*
+ * Off-canvas sidebar (mobile only): it sits on the start edge, so in RTL it
+ * has to slide out to the right instead of the left. Tailwind has no logical
+ * translate utility, hence these rules; ≥ md the sidebar is static and the
+ * `closed` state is meaningless.
+ */
+@media (max-width: 47.9375rem) {
+    .app-sidebar {
+        transition: transform 0.15s ease;
+    }
+    .app-sidebar.closed {
+        transform: translateX(-100%);
+    }
+    [dir='rtl'] .app-sidebar.closed {
+        transform: translateX(100%);
+    }
+}
