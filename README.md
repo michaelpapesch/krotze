@@ -1,8 +1,9 @@
 # Krotze — Anonymous Chat PWA
 
-Anonymous, private, self-destructing group chat. No registration, no login for
-visitors — identity is a self-chosen username plus a device key held in the
-browser's localStorage. Installable as a PWA. Built with Laravel 13,
+Anonymous, private, self-destructing group chat with live voice, video and
+screen sharing. No registration, no login for visitors — identity is a
+self-chosen username plus a device key held in the browser's localStorage.
+Installable as a PWA. Built with Laravel 13,
 Tailwind CSS 4 and vanilla JS.
 
 Live: https://krotze.com
@@ -75,6 +76,25 @@ Live: https://krotze.com
   server stores only the envelope. Devices paired later cannot read earlier
   messages (by design); previews and push bodies show a lock instead of
   text. Group channels remain encrypted at rest only.
+- **Live streams: voice, video chat and screen sharing** — a channel owner can
+  go live (📡 in the channel header) with voice only, the camera or a shared
+  screen, and switch between them or mute while live. The owner can hand the
+  right to stream to other members through a **streamer role** (member dialog
+  → "Allow streaming"), and both sides of a private conversation can stream —
+  several people live at once make it a voice or video call (up to four
+  streams per channel). A running stream **opens by itself** for everyone who
+  has the channel open; viewers can leave it and come back, mute individual
+  streams, and watch any picture **fullscreen**. The owner can end anybody's
+  stream, and withdrawing the role or removing a member ends theirs.
+  Streams are **relayed through the server over WebSockets — never peer to
+  peer**: there is no WebRTC, STUN or TURN, so members do not learn each
+  other's IP address. The honest limits: streams are not end-to-end encrypted
+  (the relay forwards the frames without decoding or recording them), video
+  needs a browser with WebCodecs (Chrome/Edge 94+, Safari 16.4+, Firefox
+  130+; voice works wherever AudioWorklet does), screen sharing is not
+  available on phones, and leaving the channel ends your own stream. The
+  feature is off until the relay is configured (see *Live streams* in
+  [DEPLOYMENT.md](DEPLOYMENT.md)) and hides itself whenever it is not running.
 - **Retention** — every channel auto-deletes all content (messages, users,
   media, meta information) after N days of inactivity (default 7, max 365,
   owner-configurable). Uploads and abandoned identities expire too: an identity
@@ -175,6 +195,19 @@ Live: https://krotze.com
   as conversation. Neither column is ever searched or sorted on, so nothing is
   given up for it. **Losing `APP_KEY` means losing every message** — back it up
   with the database, and never rotate it without re-encrypting first.
+- **Live relay** — the one part that is not polled. `php artisan live:serve`
+  runs `App\Support\Live\Server`, a single-process WebSocket server hand-rolled
+  on PHP streams (`stream_select`, RFC 6455 framing in `Live\WebSocket` — still
+  no composer package). A member fetches a one-minute HMAC ticket from the
+  signed HTTP API (`POST /api/channels/{uuid}/live`) and presents it as the
+  first socket message; the relay re-checks membership and stream rights
+  against the database every ten seconds. Browsers encode video with WebCodecs
+  (VP8, H.264 as fallback) and audio as 16 kHz µ-law in an AudioWorklet
+  (`resources/js/live.js`); the server fans the opaque frames out to the
+  channel's room and, for a viewer that cannot keep up, drops video until the
+  next keyframe instead of slowing the streamer down. Running streams are
+  announced through `/api/state`, which is what makes them start by themselves.
+  The wire protocol is documented in [docs/API.md](docs/API.md) §9.
 - **Server settings** — the `settings` table holds the admin's switches
   (registrations, approval, upload lifetimes, push). `App\Models\Setting` caches
   the whole table under one cache key and drops it on write, so queue workers
@@ -187,8 +220,12 @@ Live: https://krotze.com
   after the response, so no queue worker is needed (shared hosts rarely allow one).
   **Key generation needs an `openssl.cnf`** and many shared hosts have none, so
   one is shipped at `resources/openssl.cnf` and passed explicitly.
-- **Storage**: uploads on the `public` disk (`storage/app/public/uploads/…`,
-  served via the `public/storage` symlink).
+- **Storage**: uploads live on the `public` disk
+  (`storage/app/public/uploads/<channel-uuid>/`) but are served **only** through
+  per-member capability URLs (`GET /u/{token}`): each member gets a personal
+  token per file, and the first full view starts the admin-configured view
+  window. **Never run `php artisan storage:link`** — a `public/storage` symlink
+  would make every upload reachable without a token.
 
 ## Local development
 
@@ -196,12 +233,21 @@ Live: https://krotze.com
 composer install
 cp .env.example .env && php artisan key:generate
 php artisan migrate --seed
-php artisan storage:link
 npm install
 composer dev        # serves app + vite + queue + logs
 ```
 
 Open http://localhost:8000. Admin panel: http://localhost:8000/admin.
+
+To try live streams locally, set `LIVE_URL=ws://localhost:8090` in `.env` and
+run the relay next to the app:
+
+```sh
+php artisan live:serve
+```
+
+Use `localhost` rather than a custom dev domain over plain http — camera,
+microphone and WebCodecs only exist in a secure context.
 
 ## Tests / build
 
