@@ -220,12 +220,13 @@ Live: https://krotze.com
   after the response, so no queue worker is needed (shared hosts rarely allow one).
   **Key generation needs an `openssl.cnf`** and many shared hosts have none, so
   one is shipped at `resources/openssl.cnf` and passed explicitly.
-- **Storage**: uploads live on the `public` disk
-  (`storage/app/public/uploads/<channel-uuid>/`) but are served **only** through
-  per-member capability URLs (`GET /u/{token}`): each member gets a personal
-  token per file, and the first full view starts the admin-configured view
-  window. **Never run `php artisan storage:link`** — a `public/storage` symlink
-  would make every upload reachable without a token.
+- **Storage**: uploads live outside the web root on a private disk
+  (`storage/app/private/uploads/<channel-uuid>/`) and are served **only**
+  through per-member capability URLs (`GET /u/{token}`): each member gets a
+  personal token per file, and the first full view starts the admin-configured
+  view window. A `public/storage` symlink cannot expose them — they are not on
+  the `public` disk, `php artisan storage:link` is configured to create
+  nothing, and `public/.htaccess` refuses `/storage` outright.
 
 ## Local development
 

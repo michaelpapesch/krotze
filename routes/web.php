@@ -17,6 +17,7 @@ use App\Models\UploadView;
 use App\Support\SitePages;
 use Illuminate\Session\Middleware\AuthenticateSession;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Storage;
 
 // Public site, in every supported language (config/app.php site_locales).
 // English lives at the bare URLs (also the x-default for search engines),
@@ -125,8 +126,9 @@ Route::get('/embed/{token}', function (string $token) {
 // Uploads are served ONLY through per-member capability URLs. The token is
 // personal; the first access to the full file starts a 5-minute view window,
 // after which the token is destroyed and the URL stops resolving. Thumbnails
-// (/u/{token}/thumb) do not start the window. There must be NO public/storage
-// symlink — uploads must not be reachable outside these routes.
+// (/u/{token}/thumb) do not start the window. Uploads must not be reachable
+// outside these routes: they sit on the private `uploads` disk, which a
+// public/storage symlink cannot expose, and `storage:link` is a no-op here.
 Route::get('/u/{token}/{variant?}', function (string $token, ?string $variant = null) {
     $view = UploadView::where('token', $token)->first();
     abort_unless($view, 404);
@@ -149,7 +151,7 @@ Route::get('/u/{token}/{variant?}', function (string $token, ?string $variant = 
         $view->update(['first_viewed_at' => now()]);
     }
 
-    $path = storage_path('app/public/'.($isThumb ? $message->thumb_path : $message->file_path));
+    $path = Storage::disk('uploads')->path($isThumb ? $message->thumb_path : $message->file_path);
     abort_unless(is_file($path), 404);
 
     return response()->file($path, ['Cache-Control' => 'private, max-age=300']);

@@ -5,6 +5,11 @@
 
     RewriteEngine On
 
+    # Nothing is ever served from /storage. Uploads live outside the web root
+    # and are reachable only through their /u/{token} capability URLs; should a
+    # public/storage symlink appear anyway, this keeps it from serving a thing.
+    RewriteRule ^storage(/|$) - [F,L]
+
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]

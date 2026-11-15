@@ -20,7 +20,7 @@ php artisan migrate --seed           # fresh setup (seeds admin@krotze.com)
 Rules that are easy to get wrong:
 
 - **`public/build` is committed on purpose** (the host has no Node.js; deploy is a plain `git pull`). After any change under `resources/js` or `resources/css`, run `npm run build` and commit the build output too.
-- **Never run `php artisan storage:link`.** Uploads are served *only* through capability-token routes (`GET /u/{token}`); a `public/storage` symlink would bypass that access control.
+- **Uploads never go on the `public` disk.** They are served *only* through capability-token routes (`GET /u/{token}`) and live on the private `uploads` disk (`storage/app/private/uploads/…`), so a `public/storage` symlink cannot expose them. Keep it that way: `filesystems.links` is empty (so `storage:link` does nothing), `public/.htaccess` refuses `/storage`, and `UploadIsolationTest` pins all three.
 - **Bump `'version'` in `config/app.php`** (semver) with every release-worthy change; clients compare it against `/api/state` and show a "Reload site" notice. Beware: writing this file with PowerShell `Set-Content -Encoding utf8` adds a UTF-8 BOM that PHP then emits before every response, corrupting all API JSON — write it BOM-free.
 - **The OpenAPI spec cannot drift**: `tests/Feature/OpenApiSpecTest.php` compares `resources/api/openapi.php` against the real route table in both directions. Adding/removing a route under `api/`, `u/`, `join/`, `register/`, or `embed/` requires a matching spec edit. The narrative guide is `docs/API.md` — keep it in step too.
 
@@ -58,7 +58,7 @@ Channels have `join_mode`: `approval` (owner approves each request) or `open` (j
 
 ### Ephemeral uploads (security-sensitive)
 
-Files live in `storage/app/public/uploads/<channel-uuid>/` but are reachable only via `GET /u/{token}` in `routes/web.php`. Each member gets a personal `UploadView` token per file; upload lifetime and the per-member view window are admin-configurable (`Setting::uploadRetentionDays()` / `uploadViewMinutes()`); the first full-file access starts the window, after which the token is nulled. The `/thumb` variant never starts the window. Preserve these invariants.
+Files live in `storage/app/private/uploads/<channel-uuid>/` (disk `uploads`, moved off the `public` disk in v2.16.2) and are reachable only via `GET /u/{token}` in `routes/web.php`. Each member gets a personal `UploadView` token per file; upload lifetime and the per-member view window are admin-configurable (`Setting::uploadRetentionDays()` / `uploadViewMinutes()`); the first full-file access starts the window, after which the token is nulled. The `/thumb` variant never starts the window. Preserve these invariants.
 
 ### Retention
 

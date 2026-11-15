@@ -63,7 +63,7 @@ class Channel extends Model
     /** Completely remove the channel, its messages, members and uploaded files. */
     public function destroyCompletely(): void
     {
-        Storage::disk('public')->deleteDirectory('uploads/'.$this->uuid);
+        Storage::disk('uploads')->deleteDirectory('uploads/'.$this->uuid);
         UploadView::whereIn('message_id', $this->messages()->pluck('id'))->delete();
         $this->messages()->delete();
         $this->streams()->delete();

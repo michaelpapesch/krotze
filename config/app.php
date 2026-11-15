@@ -25,7 +25,7 @@ return [
     |
     */
 
-    'version' => '2.16.1',
+    'version' => '2.16.2',
 
     // Address shown for abuse reports (create the mailbox on the mail host!)
     'abuse_email' => env('ABUSE_EMAIL', 'abuse@krotze.com'),

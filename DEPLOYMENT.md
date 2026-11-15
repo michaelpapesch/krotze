@@ -33,11 +33,17 @@ well. If `package.json` changed, run `npm install` locally before the build.
   `php artisan key:generate`.
 - `php artisan migrate --force` and `php artisan db:seed --force` (seeds the
   admin account; `ADMIN_EMAIL` overrides the default address).
-- **Do NOT run `php artisan storage:link`** and make sure `public/storage`
-  does not exist. Uploads are served exclusively through per-member
-  ephemeral routes (`GET /u/{token}` in `routes/web.php`; file lifetime and
-  per-member view window are set in the admin panel). A symlink would bypass
-  that access control.
+- **There is no `public/storage` symlink, and none is needed.** Uploads are
+  served exclusively through per-member ephemeral routes (`GET /u/{token}` in
+  `routes/web.php`; file lifetime and per-member view window are set in the
+  admin panel). They are stored outside the web root on a private disk, so a
+  symlink created by accident exposes nothing: `php artisan storage:link` is
+  configured to do nothing, and `public/.htaccess` answers 403 for `/storage`.
+  On nginx add the equivalent yourself: `location ^~ /storage { return 403; }`.
+- Upgrading from a version before 2.16.2: `php artisan migrate --force` moves
+  existing uploads from `storage/app/public/uploads` to
+  `storage/app/private/uploads`. If a `public/storage` link exists from an
+  older setup, delete it.
 - PHP upload limits: the app allows uploads up to 50 MB, so
   `upload_max_filesize` and `post_max_size` should be at least 50M / 52M.
 - Canonical-host redirects (www → bare host, http → https) belong in the
@@ -201,6 +207,6 @@ SMTP in `.env` (`MAIL_MAILER=smtp`, `MAIL_HOST`, `MAIL_PORT`, credentials,
 
 ## Notes
 
-- Uploads live in `storage/app/public/uploads/<channel-uuid>/` and are
+- Uploads live in `storage/app/private/uploads/<channel-uuid>/` and are
   deleted together with their channel.
 - The API is documented in `docs/API.md` and browsable at `/api/docs`.
