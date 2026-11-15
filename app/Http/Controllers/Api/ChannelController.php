@@ -268,7 +268,7 @@ class ChannelController extends Controller
 
         // Uploads live under the channel uuid — move the directory and
         // re-point stored paths before the uuid changes.
-        $disk = Storage::disk('public');
+        $disk = Storage::disk('uploads');
         if ($disk->exists('uploads/'.$oldUuid)) {
             rename($disk->path('uploads/'.$oldUuid), $disk->path('uploads/'.$newUuid));
         }

@@ -103,8 +103,8 @@ class AdminController extends Controller
     public function dashboard(Request $request)
     {
         $uploadBytes = 0;
-        foreach (Storage::disk('public')->allFiles('uploads') as $f) {
-            $uploadBytes += Storage::disk('public')->size($f);
+        foreach (Storage::disk('uploads')->allFiles('uploads') as $f) {
+            $uploadBytes += Storage::disk('uploads')->size($f);
         }
 
         $query = trim((string) $request->query('q', ''));

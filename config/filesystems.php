@@ -41,6 +41,20 @@ return [
             'report' => false,
         ],
 
+        // Chat uploads. Deliberately NOT the `public` disk: they live under
+        // storage/app/private, which no `storage:link` symlink can ever
+        // expose, and are served only through the per-member capability
+        // routes (GET /u/{token}). Stored paths look like
+        // "uploads/<channel-uuid>/<file>" relative to this root.
+        'uploads' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private'),
+            'visibility' => 'private',
+            'serve' => false,
+            'throw' => false,
+            'report' => false,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),
@@ -76,8 +90,9 @@ return [
     |
     */
 
-    'links' => [
-        public_path('storage') => storage_path('app/public'),
-    ],
+    // Empty on purpose: `php artisan storage:link` then creates nothing.
+    // Nothing in this app is meant to be reachable under /storage — a link
+    // there once meant every upload could be fetched without its token.
+    'links' => [],
 
 ];

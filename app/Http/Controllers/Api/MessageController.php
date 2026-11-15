@@ -142,13 +142,13 @@ class MessageController extends Controller
                 return response()->json(['error' => ucfirst($kind).' uploads are disabled in this channel.'], 422);
             }
 
-            $path = $file->store('uploads/'.$channel->uuid, 'public');
+            $path = $file->store('uploads/'.$channel->uuid, 'uploads');
 
             $thumbPath = null;
             if ($kind === 'image') {
                 // Always thumbnail (force): the inline <img> must never hit the
                 // full file, since that would start the 5-minute view window.
-                $thumbPath = $this->makeThumb(Storage::disk('public')->path($path), $channel->uuid, $path, force: true);
+                $thumbPath = $this->makeThumb(Storage::disk('uploads')->path($path), $channel->uuid, $path, force: true);
             } elseif ($kind === 'video' && $request->hasFile('thumb')
                 && str_starts_with((string) $request->file('thumb')->getMimeType(), 'image/')) {
                 // Poster frame captured client-side (no ffmpeg on the host);
@@ -253,7 +253,7 @@ class MessageController extends Controller
     {
         $rel = 'uploads/'.$channelUuid.'/thumbs/'.pathinfo($storedPath, PATHINFO_FILENAME).'.webp';
 
-        return Thumbnail::make($srcAbs, Storage::disk('public')->path($rel), force: $force) ? $rel : null;
+        return Thumbnail::make($srcAbs, Storage::disk('uploads')->path($rel), force: $force) ? $rel : null;
     }
 
     /** @return array{0: ChatUser, 1: Channel, 2: ChannelMember} */

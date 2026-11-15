@@ -102,10 +102,10 @@ class Message extends Model
     public function deleteStoredFile(): void
     {
         if ($this->file_path) {
-            Storage::disk('public')->delete($this->file_path);
+            Storage::disk('uploads')->delete($this->file_path);
         }
         if ($this->thumb_path) {
-            Storage::disk('public')->delete($this->thumb_path);
+            Storage::disk('uploads')->delete($this->thumb_path);
         }
     }
 
