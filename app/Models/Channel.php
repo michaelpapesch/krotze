@@ -32,13 +32,18 @@ class Channel extends Model
         return $this->hasMany(Message::class);
     }
 
+    public function streams()
+    {
+        return $this->hasMany(Stream::class);
+    }
+
     public function owner()
     {
         return $this->belongsTo(ChatUser::class, 'owner_id');
     }
 
     /**
-     * Fingerprint of the member roster (ids, statuses, usernames). Clients poll
+     * Fingerprint of the member roster (ids, statuses, roles, usernames). Clients poll
      * it and reload the member list the moment it changes, so joins, leaves and
      * renames show up without a page reload.
      */
@@ -46,7 +51,7 @@ class Channel extends Model
     {
         return md5(collect($members)
             ->sortBy('id')
-            ->map(fn ($m) => $m->id.':'.$m->status.':'.($m->user?->username ?? ''))
+            ->map(fn ($m) => $m->id.':'.$m->status.':'.$m->role.':'.($m->user?->username ?? ''))
             ->implode('|'));
     }
 
@@ -61,6 +66,7 @@ class Channel extends Model
         Storage::disk('public')->deleteDirectory('uploads/'.$this->uuid);
         UploadView::whereIn('message_id', $this->messages()->pluck('id'))->delete();
         $this->messages()->delete();
+        $this->streams()->delete();
         $this->members()->delete();
         $this->delete();
     }

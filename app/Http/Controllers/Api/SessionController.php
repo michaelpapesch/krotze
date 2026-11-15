@@ -8,6 +8,8 @@ use App\Models\ChatDevice;
 use App\Models\ChatUser;
 use App\Models\Message;
 use App\Models\Setting;
+use App\Models\Stream;
+use App\Support\Live\Server;
 use App\Support\Retention;
 use App\Support\Scheduler;
 use Illuminate\Http\Request;
@@ -91,7 +93,16 @@ class SessionController extends Controller
 
         $latest = $this->latestMessages($memberships->pluck('channel_id')->all());
 
-        $channels = $memberships->map(function ($m) use ($user, $latest) {
+        // Live streams running right now, per channel — one query for all.
+        $live = Server::available();
+        $device = $request->attributes->get('chatDevice');
+        $streams = $live
+            ? Stream::active()->with('user')
+                ->whereIn('channel_id', $memberships->where('status', 'approved')->pluck('channel_id'))
+                ->orderBy('id')->get()->groupBy('channel_id')
+            : collect();
+
+        $channels = $memberships->map(function ($m) use ($user, $latest, $streams, $device) {
             $ch = $m->channel;
             $isOwner = $ch->owner_id === $user->id;
 
@@ -113,6 +124,10 @@ class SessionController extends Controller
                 'status' => $m->status,
                 'username' => $user->username,
                 'is_owner' => $isOwner,
+                'can_stream' => $m->canStream($ch),
+                // A non-empty list means: open the live connection and watch.
+                'streams' => $streams->get($ch->id, collect())
+                    ->map(fn (Stream $s) => $s->summary($device))->values(),
                 'pinned' => $m->pinned,
                 'hidden' => $m->hidden,
                 'muted' => $m->muted,
@@ -152,6 +167,8 @@ class SessionController extends Controller
             'notifications' => $notifications,
             'upload_retention_days' => Setting::uploadRetentionDays(),
             'upload_view_minutes' => Setting::uploadViewMinutes(),
+            // Whether live streams can be started and watched here right now.
+            'live' => $live,
             'version' => config('app.version'),
         ]);
     }

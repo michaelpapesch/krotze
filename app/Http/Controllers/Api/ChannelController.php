@@ -8,6 +8,7 @@ use App\Models\ChannelMember;
 use App\Models\ChatDevice;
 use App\Models\ChatNotification;
 use App\Models\ChatUser;
+use App\Models\Stream;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -76,6 +77,7 @@ class ChannelController extends Controller
                 'username' => $m->username(),
                 'status' => $m->status,
                 'is_owner' => $m->user_id === $channel->owner_id,
+                'role' => $m->roleIn($channel),
                 'is_me' => $m->user_id === $user->id,
                 'joined_at' => $m->created_at?->toIso8601String(),
             ])->values();
@@ -101,6 +103,7 @@ class ChannelController extends Controller
                 : $channel->name,
             'type' => $channel->type,
             'is_owner' => $isOwner,
+            'can_stream' => $member->canStream($channel),
             'my_member_id' => $member->id,
             'my_status' => $member->status,
             'pinned' => $member->pinned,
@@ -229,6 +232,12 @@ class ChannelController extends Controller
         }
 
         $channel->update(['owner_id' => $target->user_id]);
+
+        // The right to stream came with ownership unless the old owner is
+        // also a streamer by role.
+        if (! $channel->members()->where('user_id', $user->id)->first()?->canStream($channel)) {
+            Stream::endFor($channel->id, $user->id);
+        }
 
         ChatNotification::send($target->user_id, 'ownership_received', [
             'channel_uuid' => $channel->uuid,
