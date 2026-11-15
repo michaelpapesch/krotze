@@ -179,6 +179,7 @@ MD,
         ['name' => 'Channels', 'description' => 'Creating, configuring and destroying channels.'],
         ['name' => 'Members', 'description' => 'Join requests, approvals, removals, private conversations.'],
         ['name' => 'Messages', 'description' => 'Reading, posting and deleting messages and uploads.'],
+        ['name' => 'Live', 'description' => 'Voice, camera and screen streams, relayed over WebSockets by the live server.'],
         ['name' => 'Push', 'description' => 'Web Push subscriptions, for notifications while the client is closed.'],
         ['name' => 'Uploads', 'description' => 'The per-member capability URLs that serve uploaded files.'],
         ['name' => 'Links', 'description' => 'Deep links a client may need to open or generate.'],
@@ -301,6 +302,9 @@ MD,
                 'status' => $string('Your membership.', ['enum' => ['pending', 'approved']]),
                 'username' => $string('Your own username.'),
                 'is_owner' => $bool(),
+                'can_stream' => $bool('You may start a live stream here: you own the channel, hold the `streamer` role, or it is a private conversation.'),
+                'streams' => ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/Stream'],
+                    'description' => 'Live streams running in this channel right now. Non-empty means: get a ticket and connect to the live server.'],
                 'pinned' => $bool(),
                 'hidden' => $bool(),
                 'muted' => $bool('Muted channels raise no notification; the unread count still counts.'),
@@ -312,6 +316,16 @@ MD,
                 'member_count' => $int(),
                 'members_hash' => $string('Changes whenever anyone joins, leaves or renames. Reload the roster when it moves.'),
                 'last_activity_at' => $nullable('string'),
+            ]),
+
+            'Stream' => $object([
+                'id' => $int('Also the stream id that prefixes its media frames on the live connection.'),
+                'user_id' => $int(),
+                'username' => $string(),
+                'audio' => $bool('The streamer is sending audio.'),
+                'video' => ['type' => ['string', 'null'], 'enum' => ['camera', 'screen', null],
+                    'description' => 'What the video shows; null for a voice-only stream.'],
+                'mine' => $bool('True when this very device is the one streaming.'),
             ]),
 
             'Notification' => $object([
@@ -338,6 +352,7 @@ MD,
                 'notifications' => ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/Notification']],
                 'upload_retention_days' => $nullable('integer', 'How long uploads live. Null means they are kept until their channel goes.'),
                 'upload_view_minutes' => $nullable('integer', 'How long an upload stays readable once opened. Null means no limit.'),
+                'live' => $bool('Live streams are available: the server has a live relay configured and it is running.'),
                 'version' => $string('Server version. If it differs from the build you loaded, a newer client exists.'),
             ]),
 
@@ -346,6 +361,7 @@ MD,
                 'username' => $string(),
                 'status' => $string('', ['enum' => ['pending', 'approved']]),
                 'is_owner' => $bool(),
+                'role' => $string('`streamer` members may start live streams; the owner always may.', ['enum' => ['owner', 'streamer', 'member']]),
                 'is_me' => $bool(),
                 'joined_at' => $nullable('string', ''),
             ]),
@@ -355,6 +371,7 @@ MD,
                 'name' => $string(),
                 'type' => $string('', ['enum' => ['group', 'private']]),
                 'is_owner' => $bool(),
+                'can_stream' => $bool('You may start a live stream in this channel.'),
                 'my_member_id' => $int(),
                 'my_status' => $string('', ['enum' => ['pending', 'approved']]),
                 'pinned' => $bool(),
@@ -799,6 +816,44 @@ MD,
                 '200' => $json('Removed.', $ref('Ok')),
                 '404' => $errorRef('NotFound'),
                 '422' => $json('You cannot remove yourself.', $ref('Error')),
+            ] + $signedErrors,
+        ]],
+
+        '/api/channels/{uuid}/members/{memberId}/role' => ['post' => [
+            'tags' => ['Live'], 'security' => $signed,
+            'summary' => 'Grant or withdraw the streamer role (owner)',
+            'description' => 'A `streamer` may start live streams in the channel, like the owner. Setting the role back to '
+                .'`member` also ends a stream that member is running. The roster fingerprint (`members_hash`) changes, so '
+                .'clients reload the member list and learn about it on their next poll.',
+            'parameters' => [$param('channelUuid'), $param('memberId')],
+            'requestBody' => $body($object(['role' => $string('', ['enum' => ['member', 'streamer']])], ['role'])),
+            'responses' => [
+                '200' => $json('Saved.', $ref('Ok')),
+                '404' => $errorRef('NotFound'),
+                '422' => $json('Not a group channel, or the member is the owner.', $ref('Error')),
+            ] + $signedErrors,
+        ]],
+
+        '/api/channels/{uuid}/live' => ['post' => [
+            'tags' => ['Live'], 'security' => $signed,
+            'summary' => 'Get a ticket for the live room of a channel',
+            'description' => 'Live streams do not run over this HTTP API. Media is relayed by a WebSocket server: a streamer sends '
+                .'encoded audio and video frames to it, and it forwards them to every member connected to the same channel. '
+                ."Clients never connect to each other.\n\n"
+                .'A WebSocket cannot carry the request signature, so a member asks here for a ticket and sends it as the first '
+                .'message on the socket: `{"t":"join","ticket":"…"}`. The ticket is bound to this device and channel and '
+                ."expires after `expires_in` seconds; it is only needed to join, the connection outlives it.\n\n"
+                .'The message and frame formats are described in the guide (docs/API.md, “Live streams”).',
+            'parameters' => [$param('channelUuid')],
+            'responses' => [
+                '200' => $json('Connect to `url` and join with `ticket`.', $object([
+                    'url' => $string('The live server, `wss://…`.'),
+                    'ticket' => $string(),
+                    'expires_in' => $int('Seconds.'),
+                ])),
+                '404' => $errorRef('NotFound'),
+                '429' => $errorRef('TooManyRequests'),
+                '503' => $json('This server has no live relay, or it is not running (`live` is false in `/api/state`).', $ref('Error')),
             ] + $signedErrors,
         ]],
 

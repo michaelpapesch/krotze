@@ -3,6 +3,7 @@ import jsQR from 'jsqr';
 import { base32, hex, hmacSha256, open as unseal, randomBytes, seal, sha256 } from './crypto.js';
 import { LANGS, dir, getLang, setLang, t } from './i18n.js';
 import { boxPublicKey, decryptEnvelope, encryptFor, safetyNumber } from './e2ee.js';
+import { canCapture, canEncodeVideo, canShareScreen, initLive, liveMount, liveStart, liveStatus, liveSync, liveWatch } from './live.js';
 
 /* ------------------------------------------------------------------ */
 /* Krotze — anonymous chat PWA (vanilla JS single-page app)            */
@@ -507,6 +508,7 @@ function closeChannel() {
     store.current = null;
     store.detail = null;
     store.server = homeServer();
+    liveSync(null);
     clearLastChannel();
     renderEmpty();
     renderChannelList();
@@ -1168,6 +1170,7 @@ function renderChannelList() {
             <span class="shrink-0">${c.type === 'private' ? '👤' : '#'}</span>
             ${serverChipHtml(c.server)}
             <span class="flex-1 min-w-0 truncate">${esc(c.name)}${c.status === 'pending' ? ` <span class="text-xs text-amber-400">${t('(waiting)')}</span>` : ''}</span>
+            ${c.streams?.length ? `<span class="shrink-0 text-xs text-red-400" title="${t('Live stream running')}">●</span>` : ''}
             ${c.pinned ? `<span class="shrink-0 text-xs opacity-70" title="${t('Pinned')}">📌</span>` : ''}
             ${c.muted ? `<span class="shrink-0 text-xs opacity-70" title="${t('Muted')}">🔕</span>` : ''}
             ${c.pending_count ? `<span class="shrink-0 rounded-full bg-amber-500 px-1.5 text-xs font-bold text-black" title="${t('pending join requests')}">${c.pending_count}</span>` : ''}
@@ -1390,6 +1393,8 @@ async function openChannel(uuid, server = null) {
     store.replyTo = null;
     store.membersOpen = false;
     store.stickToBottom = true;
+    // Leaving a channel leaves its live stream (and ends your own).
+    if (!liveStatus(cur.key).connected) liveSync(null);
     setLastChannel(server, uuid);
     renderChannelList();
     renderProfileName(); // the profile button follows the active server
@@ -1402,7 +1407,64 @@ async function openChannel(uuid, server = null) {
         return;
     }
     renderChannelView();
+    syncLive();
     await loadMessages(true);
+}
+
+/* ------------------------------- live ------------------------------ */
+
+/** The open channel as the live module wants it, or null. */
+function liveTarget() {
+    const cur = store.current;
+    const d = store.detail;
+    if (!cur || !d || d.key !== cur.key) return null;
+    const entry = cur.server.channels.find((c) => c.uuid === cur.uuid);
+    return {
+        key: cur.key,
+        server: cur.server,
+        uuid: cur.uuid,
+        isOwner: !!d.is_owner,
+        available: !!cur.server.state.live && cur.server.status === 'ok',
+        streams: entry?.streams || [],
+    };
+}
+
+let liveSignature = '';
+
+/**
+ * Runs after every poll: a channel with a running stream connects by itself,
+ * and the header follows what is going on (Go live / Watch buttons).
+ */
+function syncLive() {
+    const target = liveTarget();
+    liveSync(target);
+    const signature = target ? `${target.key}:${target.available}:${target.streams.length}` : '';
+    if (signature !== liveSignature) {
+        liveSignature = signature;
+        renderChannelHeader();
+    }
+}
+
+function goLiveDialog() {
+    const m = modal(`
+        <h2 class="text-lg font-bold text-white">📡 ${t('Go live')}</h2>
+        <p class="mt-2 text-sm text-zinc-400">
+            ${t('Your stream is relayed through this server to every member who has this channel open. It is not end-to-end encrypted, and the server records nothing.')}
+        </p>
+        <div class="mt-5 space-y-2">
+            <button data-mode="voice" class="w-full rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500">🎙 ${t('Voice only')}</button>
+            ${canEncodeVideo() ? `<button data-mode="camera" class="w-full rounded-lg border border-white/20 px-4 py-2 text-sm hover:bg-white/10">📷 ${t('Camera')}</button>` : ''}
+            ${canShareScreen() ? `<button data-mode="screen" class="w-full rounded-lg border border-white/20 px-4 py-2 text-sm hover:bg-white/10">🖥 ${t('Share screen')}</button>` : ''}
+            <button data-cancel class="w-full rounded-lg border border-white/20 px-4 py-2 text-sm hover:bg-white/10">${t('Cancel')}</button>
+        </div>`);
+    m.querySelector('[data-cancel]').onclick = () => m.remove();
+    m.querySelectorAll('[data-mode]').forEach((btn) => {
+        btn.onclick = () => {
+            m.remove();
+            const target = liveTarget();
+            if (target) liveStart(target, btn.dataset.mode);
+        };
+    });
 }
 
 function channelHeaderHtml(d) {
@@ -1410,6 +1472,9 @@ function channelHeaderHtml(d) {
     const memberCount = d.members.filter((m) => m.status === 'approved').length;
     const chip = serverChipHtml(d.server);
     const where = chip ? `${chip} ${esc(serverLabel(d.server))} · ` : '';
+    const live = liveStatus(d.key);
+    const liveOn = !!d.server?.state.live;
+    const running = d.server?.channels.find((c) => c.uuid === d.uuid)?.streams?.length || 0;
     return `
         <button id="btn-menu" class="text-zinc-300 text-xl px-2 md:hidden">☰</button>
         <div class="min-w-0 flex-1">
@@ -1418,6 +1483,8 @@ function channelHeaderHtml(d) {
                 ? `${t('private conversation')}${e2eeReady(d) ? ' · 🔒 ' + t('end-to-end encrypted') : ''}`
                 : `${t('you are :name', { name: esc(d.server?.state.username || '') })}${d.is_owner ? ' · ' + t('owner') : ''}`}</p>
         </div>
+        ${liveOn && running && !live.connected ? `<button id="btn-watch" title="${t('Watch the live stream')}" class="shrink-0 rounded-lg border border-red-400/50 px-3 py-1.5 text-xs text-red-300 hover:bg-red-400/10">● ${t('Live')}</button>` : ''}
+        ${liveOn && d.can_stream && !live.broadcasting && canCapture() ? `<button id="btn-live" title="${t('Go live')}" class="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/10">📡</button>` : ''}
         ${pendingCount ? `<button id="btn-requests" title="${t('Open join requests')}" class="shrink-0 rounded-lg border border-amber-400/40 px-3 py-1.5 text-xs text-amber-300 hover:bg-amber-400/10">👋 ${pendingCount}</button>` : ''}
         ${d.type === 'group' ? `<button id="btn-members" title="${t('Members')}" class="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/10">👥 ${memberCount}</button>` : ''}
         ${d.is_owner && d.invite_url ? `<button id="btn-qr" class="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/10">QR</button>` : ''}
@@ -1434,6 +1501,11 @@ function renderChannelHeader() {
     document.getElementById('btn-requests')?.addEventListener('click', () => pendingRequestsDialog(store.detail));
     document.getElementById('btn-members')?.addEventListener('click', toggleMembersPanel);
     document.getElementById('btn-qr')?.addEventListener('click', () => qrDialog(store.detail));
+    document.getElementById('btn-live')?.addEventListener('click', goLiveDialog);
+    document.getElementById('btn-watch')?.addEventListener('click', () => {
+        const target = liveTarget();
+        if (target) liveWatch(target);
+    });
     // Same modal as long-pressing the chat in the list; the list entry carries
     // the pin/mute/hide state, the detail carries ownership.
     document.getElementById('btn-chan-menu').onclick = () =>
@@ -1445,6 +1517,7 @@ function renderChannelView() {
     document.getElementById('main').innerHTML = `
         <div id="chan-header" class="flex items-center gap-2 border-b border-white/10 p-3"></div>
         <div id="members-panel" class="hidden border-b border-white/10 bg-[#141221] max-h-56 overflow-y-auto"></div>
+        <div id="stream-panel" class="shrink-0"></div>
         <div id="messages" class="flex-1 min-h-0 overflow-y-auto p-4 space-y-3"></div>
         <div id="reply-bar" class="hidden border-t border-white/10 px-3 pt-2"></div>
         <form id="composer" class="border-t border-white/10 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex items-end gap-2">
@@ -1458,6 +1531,7 @@ function renderChannelView() {
         </form>`;
 
     renderChannelHeader();
+    liveMount(document.getElementById('stream-panel'));
 
     const input = document.getElementById('msg-input');
     input.addEventListener('keydown', (e) => {
@@ -1532,7 +1606,7 @@ function renderMembersPanel() {
         const row = document.createElement('button');
         row.className = 'w-full flex items-center gap-2 px-4 py-2 text-sm text-start hover:bg-white/5';
         row.innerHTML = `
-            <span>${m.is_owner ? '👑' : '👤'}</span>
+            <span${m.role === 'streamer' ? ` title="${t('May stream')}"` : ''}>${m.is_owner ? '👑' : m.role === 'streamer' ? '📡' : '👤'}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-200">${esc(m.username)}${m.is_me ? ` <span class="text-zinc-500">${t('(you)')}</span>` : ''}</span>
             ${m.status === 'pending' ? `<span class="text-xs text-amber-400">${t('pending')}</span>` : ''}`;
         row.onclick = () => memberDialog(m);
@@ -1567,6 +1641,7 @@ function memberDialog(m) {
         <div class="mt-5 space-y-2">
             <button id="m-private" class="w-full rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500">💬 ${t('Start private chat')}</button>
             ${d.is_owner && d.type === 'group' ? `
+                <button id="m-stream" class="w-full rounded-lg border border-white/20 px-4 py-2 text-sm hover:bg-white/10">📡 ${m.role === 'streamer' ? t('Withdraw streaming right') : t('Allow streaming')}</button>
                 <button id="m-transfer" class="w-full rounded-lg border border-white/20 px-4 py-2 text-sm hover:bg-white/10">👑 ${t('Transfer channel ownership')}</button>
                 <button id="m-remove" class="w-full rounded-lg border border-red-500/40 px-4 py-2 text-sm text-red-400 hover:bg-red-500/10">${t('Remove from channel')}</button>` : ''}
             <button data-cancel class="w-full rounded-lg border border-white/20 px-4 py-2 text-sm hover:bg-white/10">${t('Cancel')}</button>
@@ -1582,6 +1657,18 @@ function memberDialog(m) {
             else toastInfo(t('Private chat request sent to :name. Waiting for them to accept.', { name: m.username }));
         } catch (e) { toastError(e); }
     };
+
+    mm.querySelector('#m-stream')?.addEventListener('click', async () => {
+        mm.remove();
+        const role = m.role === 'streamer' ? 'member' : 'streamer';
+        try {
+            await api(`/channels/${d.uuid}/members/${m.id}/role`, { server: d.server, body: { role } });
+            toastInfo(role === 'streamer'
+                ? t(':name may now stream in this channel.', { name: m.username })
+                : t(':name may no longer stream in this channel.', { name: m.username }));
+            await reloadChannelDetail();
+        } catch (e) { toastError(e); }
+    });
 
     mm.querySelector('#m-transfer')?.addEventListener('click', async () => {
         mm.remove();
@@ -2762,8 +2849,15 @@ function scanQrDialog() {
             stream = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: 'environment' },
             });
-        } catch {
-            status.textContent = t('Camera access denied. You can also open the invite link directly.');
+        } catch (e) {
+            // Say what actually went wrong: a camera held by another program
+            // (NotReadableError, Firefox: "Failed to allocate videosource")
+            // is not a refused permission, and the fix is a different one.
+            status.textContent = e?.name === 'NotAllowedError' || e?.name === 'SecurityError'
+                ? t('Camera access denied. You can also open the invite link directly.')
+                : e?.name === 'NotFoundError' || e?.name === 'OverconstrainedError'
+                    ? t('No camera was found. You can also open the invite link directly.')
+                    : t('The camera could not be started. It is probably in use by another app or browser. You can also open the invite link directly.');
             return;
         }
         if (stopped) { stream.getTracks().forEach((track) => track.stop()); return; }
@@ -3620,6 +3714,7 @@ async function pollServer(server) {
         server.state.uploadRetentionDays = data.upload_retention_days ?? null;
         server.state.uploadViewMinutes = data.upload_view_minutes ?? null;
         server.state.version = data.version ?? null;
+        server.state.live = !!data.live;
         const status = data.account_status || 'approved';
         server.status = status === 'approved' ? 'ok' : status;
         if (server.status !== before) saveServers();
@@ -3687,6 +3782,7 @@ async function refreshState({ seedNotifications = false, only = null } = {}) {
         }
     }
 
+    syncLive();
     renderChannelList();
     renderNotifications();
     updateTitleBadge();
@@ -3920,4 +4016,5 @@ function startPolling() {
     }, 4000);
 }
 
+initLive({ api, esc, toastError, toastInfo, onChange: () => renderChannelHeader() });
 boot();

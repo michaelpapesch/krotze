@@ -143,7 +143,7 @@ class RetentionTest extends TestCase
         $removed = Retention::prune();
 
         $this->assertSame(
-            ['channels', 'uploads', 'identities', 'tombstones', 'cache'],
+            ['channels', 'uploads', 'identities', 'tombstones', 'streams', 'cache'],
             array_keys($removed),
         );
         $this->assertSame(1, $removed['identities']);

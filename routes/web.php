@@ -4,6 +4,7 @@ use App\Http\Controllers\Admin\AdminController;
 use App\Http\Controllers\Admin\PasswordResetController;
 use App\Http\Controllers\Api\ChannelController;
 use App\Http\Controllers\Api\DocsController;
+use App\Http\Controllers\Api\LiveController;
 use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\NotificationController;
@@ -211,6 +212,11 @@ Route::prefix('api')->group(function () {
         Route::post('channels/{uuid}/private', [ChannelController::class, 'startPrivate']);
         Route::post('channels/{uuid}/private-response', [ChannelController::class, 'respondPrivate']);
         Route::delete('channels/{uuid}/members/{memberId}', [MemberController::class, 'remove']);
+
+        // Live streams. Media runs over the WebSocket live server; these two
+        // decide who may stream and hand out the ticket that admits a member.
+        Route::post('channels/{uuid}/members/{memberId}/role', [LiveController::class, 'setRole']);
+        Route::post('channels/{uuid}/live', [LiveController::class, 'ticket'])->middleware('throttle:60,1');
 
         Route::get('channels/{uuid}/messages', [MessageController::class, 'index']);
         Route::post('channels/{uuid}/messages', [MessageController::class, 'store']);

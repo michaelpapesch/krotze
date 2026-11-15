@@ -177,6 +177,8 @@ Fields worth handling properly:
 - **`account_status`** — `pending` or `denied` means an admin has not let this
   identity in (§6). While pending, only `/api/state`, `/api/profile` and
   `/api/profile/username` work.
+- **`live`** and per channel **`streams`** / **`can_stream`** — live voice,
+  camera and screen streams (§9).
 - **`notifications`** — see below.
 
 ### Notifications
@@ -206,7 +208,7 @@ empty body) applies — you join under your username, so claim one first (§1).
   `join_denied` notifications.
 - **`join_mode: "open"`** — the answer is `status: "approved"` and you are in
   immediately. Open joins are throttled per IP (`429` — wait a minute), and
-  **posting into an open channel is throttled per member** (§9). Open channels
+  **posting into an open channel is throttled per member** (§10). Open channels
   are what the embeddable widget at `/embed/{invite_token}` builds on — the
   one page served with `frame-ancestors *` so any site may iframe it.
 
@@ -459,13 +461,95 @@ respect:
 
 ---
 
-## 9. Rate limits and errors
+## 9. Live streams
+
+Voice, camera and screen sharing do **not** run over the HTTP API, and there is
+no WebRTC anywhere in Krotze: clients never connect to each other. A streamer
+sends encoded audio and video to the server's *live relay* over a WebSocket,
+and the relay forwards the frames to every member connected to the same
+channel. Other members therefore never learn a streamer's or viewer's network
+address; the relay stores and decodes nothing.
+
+Who may stream: the channel owner, members the owner gave the `streamer` role
+(`POST /api/channels/{uuid}/members/{memberId}/role`), and both sides of a
+private conversation. `can_stream` in `/api/state` and the channel detail says
+whether you may; `role` on each member says who else can.
+
+### Discovering and joining
+
+- `/api/state` carries `live` (the relay is configured and running) and, per
+  channel, `streams` — the streams running right now. The official client
+  connects as soon as the open channel's list is non-empty; that is all
+  "streams start by themselves" means.
+- `POST /api/channels/{uuid}/live` (signed) returns `{url, ticket, expires_in}`.
+  Open a WebSocket to `url` and send the ticket as the first message. The
+  ticket is bound to your device and that channel and lasts a minute; the
+  connection outlives it. A connection that has not joined after 10 seconds
+  is dropped.
+
+### Control messages (text frames, JSON)
+
+| Direction | Message | Meaning |
+| --- | --- | --- |
+| → | `{"t":"join","ticket":"…"}` | enter the channel's room |
+| ← | `{"t":"joined","streams":[…]}` | you are in; the streams already running |
+| → | `{"t":"start","audio":true,"video":"camera","vconf":{…}}` | go live (needs the right to stream) |
+| → | `{"t":"update", …}` | same fields: you muted, switched camera ↔ screen, or the encoder changed |
+| → | `{"t":"stop"}` | end your stream; with `"id"` the channel owner ends anybody's |
+| ← | `{"t":"stream","stream":{…}}` | a stream started or changed |
+| ← | `{"t":"ended","id":7}` | a stream is over |
+| → | `{"t":"keyframe","id":7}` | viewer: I cannot decode, please send a keyframe |
+| ← | `{"t":"keyframe"}` | streamer: produce a keyframe now (somebody joined or fell behind) |
+| ← | `{"t":"viewers","count":3}` | streamer: how many others are connected |
+| ← | `{"t":"error","error":"…"}` | a request was refused |
+
+A stream object is `{id, user_id, username, audio, video, vconf, mine}`.
+`video` is `"camera"`, `"screen"` or `null`; `vconf` is
+`{codec, width, height}` — everything a decoder needs (`vp8`, or
+`avc1.42E01F` in Annex B framing, so no out-of-band description exists).
+Unknown message types are ignored in both directions.
+
+Close codes: `4401` ticket refused, `4403` you are no longer a member,
+`1002` protocol error.
+
+### Media (binary frames)
+
+```
+streamer → relay    [u8 kind] [u32 timestamp ms, big-endian] [payload]
+relay → viewer      [u32 stream id, big-endian] + the same bytes
+```
+
+| kind | payload |
+| --- | --- |
+| `1` | video keyframe (one encoded frame, as WebCodecs `EncodedVideoChunk` data) |
+| `2` | video delta frame |
+| `3` | audio: G.711 µ-law, 16 kHz, mono — the official client sends 40 ms (640 bytes) per packet |
+
+Rules a client has to respect:
+
+- **Start decoding at a keyframe.** After joining, and whenever your connection
+  falls behind, the relay withholds delta frames until the next keyframe, so
+  what you receive is always decodable in order.
+- **Send a keyframe when asked**, and at least every few seconds.
+- **Limits:** 1 MB per frame, about 4.8 Mbit/s per streamer (exceeding it ends
+  the stream), four streams per channel, one stream per member and channel — a
+  second device starting takes over.
+- Membership is re-checked every ten seconds: a removed member is
+  disconnected, a withdrawn role ends the stream.
+
+Streams are **not end-to-end encrypted**: the relay sees the frames it
+forwards (it does not record them). Do not tell users otherwise.
+
+---
+
+## 10. Rate limits and errors
 
 | Endpoint | Limit |
 | --- | --- |
 | `POST /api/session` | 30 / minute |
 | `POST /api/devices/claim`, `/import` | 10 / minute |
 | `POST /api/push/test` | 10 / minute |
+| `POST /api/channels/{uuid}/live` | 60 / minute |
 | `POST /api/push/relay/deliver` | 120 requests / minute per IP; 600 items per IP and 30 per token |
 | `POST /api/join/{token}` into an **open** channel | 6 / minute per IP |
 | `POST /api/channels/{uuid}/messages` in an **open** channel | 20 / minute per member (the owner is exempt) |
@@ -485,7 +569,7 @@ client from before the signed-request scheme.
 
 ---
 
-## 10. Be a good citizen
+## 11. Be a good citizen
 
 Krotze exists because its users want conversations that leave nothing behind.
 A client that stores messages forever, uploads them elsewhere, or keeps files

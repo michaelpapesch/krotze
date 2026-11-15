@@ -64,6 +64,75 @@ so the two never do the same work twice. The admin dashboard reports which
 of the two is in charge; `php artisan cache:clear` wipes the heartbeat, so
 give it a minute after a deploy before reading it.
 
+## Live streams (voice, camera, screen sharing)
+
+Off until `LIVE_URL` is set. Streams are relayed by a WebSocket server that
+ships with the app — browsers never connect to each other, and no third-party
+service (STUN/TURN) is involved:
+
+```sh
+php artisan live:serve        # listens on LIVE_HOST:LIVE_PORT (127.0.0.1:8090)
+```
+
+```dotenv
+LIVE_URL=wss://live.example.com     # what browsers connect to
+LIVE_HOST=127.0.0.1                 # where the process listens
+LIVE_PORT=8090
+```
+
+It is one long-running PHP process using the same database and `APP_KEY` as
+the site (it must run from the same checkout and `.env`). Two things have to
+be arranged on the host:
+
+1. **Keep it running.** Under systemd or supervisor:
+
+   ```ini
+   [Service]
+   WorkingDirectory=/path/to/krotze
+   ExecStart=/usr/bin/php artisan live:serve
+   Restart=always
+   ```
+
+   Without either, the scheduler does it: while `LIVE_URL` is set,
+   `schedule:run` starts `live:serve` every minute, and a start that finds the
+   port taken exits immediately. After a deploy the process notices that
+   `config/app.php` changed (the version bump) and exits by itself within ten
+   seconds, so its supervisor — or the next scheduler minute — starts the new
+   code. Running streams end at that moment.
+
+2. **Make it reachable over TLS.** A page served over https can only open
+   `wss://` connections. Either give it a (sub)domain behind a reverse proxy:
+
+   ```nginx
+   server {
+       server_name live.example.com;          # plus the usual TLS setup
+       location / {
+           proxy_pass http://127.0.0.1:8090;
+           proxy_http_version 1.1;
+           proxy_set_header Upgrade $http_upgrade;
+           proxy_set_header Connection "upgrade";
+           proxy_read_timeout 1h;
+           proxy_buffering off;
+       }
+   }
+   ```
+
+   (Apache: `ProxyPass / ws://127.0.0.1:8090/` with `mod_proxy_wstunnel`.) Or,
+   where no proxy can forward WebSocket upgrades, let the process terminate TLS
+   itself on a public port: `LIVE_HOST=0.0.0.0`, `LIVE_TLS_CERT` / `LIVE_TLS_KEY`
+   pointing at the PEM files, and `LIVE_URL=wss://example.com:8090`. It reads the
+   certificate at start, so restart it after a renewal.
+
+Clients learn the address through the API; `/api/state` reports `live: true`
+only while the process is up (it stamps a heartbeat), so a stopped relay hides
+the feature instead of breaking it. Bandwidth is the real cost: every viewer
+of a stream receives roughly 0.2 Mbit/s for voice plus 0.6 (camera) to
+1.5 Mbit/s (screen) for video, all through this server.
+
+Browsers need WebCodecs for video (Chrome/Edge 94+, Safari 16.4+, Firefox
+130+); voice works wherever AudioWorklet does. Both require a secure context —
+on plain http the buttons do not appear, except on `localhost`.
+
 ## Web Push
 
 Push is off until a VAPID keypair exists. Generate one **once**:

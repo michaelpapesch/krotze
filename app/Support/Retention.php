@@ -6,6 +6,7 @@ use App\Models\Channel;
 use App\Models\ChatUser;
 use App\Models\Message;
 use App\Models\Setting;
+use App\Models\Stream;
 
 /**
  * Everything Krotze deletes on a schedule, in one place.
@@ -31,6 +32,7 @@ class Retention
             'uploads' => self::expiredUploads(),
             'identities' => self::abandonedIdentities(),
             'tombstones' => self::staleTombstones(),
+            'streams' => Stream::pruneStale(),
             'cache' => CacheGc::pruneExpired(),
         ];
     }
