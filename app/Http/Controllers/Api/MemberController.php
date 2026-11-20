@@ -103,6 +103,15 @@ class MemberController extends Controller
             $member->delete();
         }
 
+        // The request is answered wherever the owner did it from, so their
+        // card for it goes too (decideBulk does the same).
+        $user->notifications()
+            ->whereNull('read_at')
+            ->where('type', 'join_request')
+            ->get()
+            ->filter(fn ($n) => (int) ($n->data['member_id'] ?? 0) === $memberId)
+            ->each->update(['read_at' => now()]);
+
         return response()->json(['ok' => true]);
     }
 

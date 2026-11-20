@@ -66,6 +66,7 @@ class ChannelController extends Controller
     public function show(Request $request, string $uuid)
     {
         [$user, $channel, $member] = $this->resolve($request, $uuid);
+        $this->refuseApplicant($channel, $member);
 
         $isOwner = $channel->owner_id === $user->id;
         $channel->load('members.user');
@@ -362,7 +363,8 @@ class ChannelController extends Controller
      */
     public function startPrivate(Request $request, string $uuid)
     {
-        [$user, $channel] = $this->resolve($request, $uuid);
+        [$user, $channel, $member] = $this->resolve($request, $uuid);
+        $this->refuseApplicant($channel, $member);
 
         $data = $request->validate(['member_id' => 'required|integer']);
 
@@ -436,6 +438,19 @@ class ChannelController extends Controller
         $channel->destroyCompletely();
 
         return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Somebody whose join request the owner has not answered yet is in the
+     * member table, but not in the channel: they may withdraw the request
+     * (leave) and that is all. Without this an applicant could read the
+     * roster and write to members of a channel nobody let them into. Private
+     * conversations are exempt — the invited side is pending until it answers,
+     * and already knows who is asking.
+     */
+    private function refuseApplicant(Channel $channel, ChannelMember $member): void
+    {
+        abort_if($channel->type === 'group' && $member->status !== 'approved', 403);
     }
 
     /** @return array{0: ChatUser, 1: Channel, 2: ChannelMember} */

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Channel;
 use App\Models\ChannelMember;
 use App\Models\ChatDevice;
+use App\Models\ChatNotification;
 use App\Models\ChatUser;
 use App\Models\Message;
 use App\Models\Setting;
@@ -143,10 +144,29 @@ class RetentionTest extends TestCase
         $removed = Retention::prune();
 
         $this->assertSame(
-            ['channels', 'uploads', 'identities', 'tombstones', 'streams', 'cache'],
+            ['channels', 'uploads', 'identities', 'tombstones', 'notifications', 'streams', 'cache'],
             array_keys($removed),
         );
         $this->assertSame(1, $removed['identities']);
+    }
+
+    public function test_read_notifications_are_dropped_and_unread_ones_kept(): void
+    {
+        $user = $this->identity(['username' => 'reader-'.Str::random(6), 'age' => now()]);
+        $data = ['channel_name' => 'Somewhere'];
+
+        $old = ChatNotification::create(['user_id' => $user->id, 'type' => 'join_approved', 'data' => $data, 'read_at' => now()->subHours(2)]);
+        $fresh = ChatNotification::create(['user_id' => $user->id, 'type' => 'join_approved', 'data' => $data, 'read_at' => now()]);
+        $unread = ChatNotification::create(['user_id' => $user->id, 'type' => 'join_approved', 'data' => $data]);
+        // Unread stays however old it is: its reader may simply be away.
+        $unread->forceFill(['created_at' => now()->subDays(30)])->save();
+
+        $removed = Retention::prune();
+
+        $this->assertSame(1, $removed['notifications']);
+        $this->assertNull(ChatNotification::find($old->id));
+        $this->assertNotNull(ChatNotification::find($fresh->id));
+        $this->assertNotNull(ChatNotification::find($unread->id));
     }
 
     public function test_inactive_channels_and_stale_tombstones_still_go(): void

@@ -248,15 +248,26 @@ function renderMessages() {
     }
 }
 
+/** Add what the list does not hold yet, in id order (polls and sends overlap). */
+function mergeMessages(incoming) {
+    const known = new Set(state.messages.map((m) => m.id));
+    const fresh = incoming.filter((m) => !known.has(m.id));
+    if (!fresh.length) return;
+    state.messages.push(...fresh);
+    state.messages.sort((a, b) => a.id - b.id);
+}
+
 async function loadMessages(initial = false) {
     if (!state.uuid) return;
     try {
         const data = await api(`/channels/${state.uuid}/messages?after=${initial ? 0 : state.lastMessageId}`);
         if (initial) state.messages = data.messages;
-        else if (data.messages.length) state.messages.push(...data.messages);
+        else if (data.messages.length) mergeMessages(data.messages);
         else return;
-        if (state.messages.length) {
-            state.lastMessageId = state.messages[state.messages.length - 1].id;
+        if (data.messages.length) {
+            // Only polls move the cursor: our own send must not jump it past
+            // somebody else's message that has not been fetched yet.
+            state.lastMessageId = Math.max(state.lastMessageId, data.messages[data.messages.length - 1].id);
             api(`/channels/${state.uuid}/read`, { body: { message_id: state.lastMessageId } }).catch(() => {});
         }
         renderMessages();
@@ -278,8 +289,7 @@ async function sendMessage(e) {
     input.style.height = 'auto';
     try {
         const res = await api(`/channels/${state.uuid}/messages`, { body: { body } });
-        state.messages.push(res.message);
-        state.lastMessageId = res.message.id;
+        mergeMessages([res.message]);
         renderMessages();
     } catch (err) {
         input.value = body; // don't lose the text on throttle/errors

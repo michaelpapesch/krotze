@@ -347,6 +347,7 @@ const de = {
     'Could not join this chat. Please try again later.': 'Beitritt zu diesem Chat nicht möglich. Bitte versuche es später erneut.',
     // e2ee
     'Encrypted message': 'Verschlüsselte Nachricht',
+    'New message': 'Neue Nachricht',
     'This message cannot be decrypted on this device.': 'Diese Nachricht kann auf diesem Gerät nicht entschlüsselt werden.',
     'end-to-end encrypted': 'Ende-zu-Ende-verschlüsselt',
     'Verify end-to-end encryption': 'Ende-zu-Ende-Verschlüsselung überprüfen',
@@ -706,6 +707,7 @@ const es = {
     'Could not join this chat. Please try again later.': 'No se pudo entrar en este chat. Inténtalo de nuevo más tarde.',
     // e2ee
     'Encrypted message': 'Mensaje cifrado',
+    'New message': 'Mensaje nuevo',
     'This message cannot be decrypted on this device.': 'Este mensaje no puede descifrarse en este dispositivo.',
     'end-to-end encrypted': 'cifrado de extremo a extremo',
     'Verify end-to-end encryption': 'Verificar el cifrado de extremo a extremo',
