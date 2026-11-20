@@ -100,4 +100,34 @@ class UploadIsolationTest extends TestCase
         // …and before the front controller, or it would never be reached.
         $this->assertLessThan(strpos($htaccess, 'RewriteRule ^ index.php'), strpos($htaccess, 'RewriteRule ^storage'));
     }
+
+    public function test_a_capability_url_dies_when_its_holder_stops_being_a_member(): void
+    {
+        Storage::fake('uploads');
+
+        $owner = ChatUser::create(['username' => 'own-'.Str::random(6), 'status' => ChatUser::APPROVED, 'last_seen_at' => now()]);
+        $guest = ChatUser::create(['username' => 'gst-'.Str::random(6), 'status' => ChatUser::APPROVED, 'last_seen_at' => now()]);
+        $channel = Channel::create([
+            'uuid' => (string) Str::uuid(), 'name' => 'Uploads', 'type' => 'group',
+            'owner_id' => $owner->id, 'invite_token' => Str::random(40), 'last_activity_at' => now(),
+        ]);
+        ChannelMember::create(['channel_id' => $channel->id, 'user_id' => $owner->id, 'status' => 'approved']);
+        $membership = ChannelMember::create(['channel_id' => $channel->id, 'user_id' => $guest->id, 'status' => 'approved']);
+
+        $this->upload(ChatDevice::issue($owner)->credentials(), "/api/channels/{$channel->uuid}/messages",
+            UploadedFile::fake()->image('photo.png', 40, 30))->assertSuccessful();
+        $message = Message::whereNotNull('file_path')->firstOrFail();
+
+        $view = UploadView::create(['message_id' => $message->id, 'user_id' => $guest->id, 'token' => Str::random(48)]);
+        $this->get('/u/'.$view->token.'/thumb')->assertOk();
+
+        $membership->delete();
+
+        $this->get('/u/'.$view->token.'/thumb')->assertNotFound();
+        $this->get('/u/'.$view->token)->assertNotFound();
+        $this->assertNull(UploadView::find($view->id));
+        // The file itself is untouched — the owner's link still works.
+        $ownerToken = UploadView::where('message_id', $message->id)->where('user_id', $owner->id)->value('token');
+        $this->get('/u/'.$ownerToken.'/thumb')->assertOk();
+    }
 }

@@ -6,6 +6,7 @@ use App\Models\Channel;
 use App\Models\ChannelMember;
 use App\Models\ChatDevice;
 use App\Models\ChatUser;
+use App\Models\Message;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -208,5 +209,83 @@ class OpenJoinTest extends TestCase
             ->assertJson(['embed_url' => url('/embed/'.$open->invite_token)]);
         $this->signed($cred, 'GET', "/api/channels/{$approval->uuid}")
             ->assertJson(['embed_url' => null]);
+    }
+
+    public function test_an_applicant_awaiting_approval_sees_no_roster_and_cannot_message_members(): void
+    {
+        [$owner] = $this->identity('owner');
+        $channel = $this->makeChannel($owner);
+        $ownerMember = $channel->members()->where('user_id', $owner->id)->firstOrFail();
+        [$applicant, $cred] = $this->identity('applicant');
+
+        $this->signed($cred, 'POST', "/api/join/{$channel->invite_token}")->assertJson(['status' => 'pending']);
+
+        $this->signed($cred, 'GET', "/api/channels/{$channel->uuid}")->assertForbidden();
+        $this->signed($cred, 'POST', "/api/channels/{$channel->uuid}/private", ['member_id' => $ownerMember->id])
+            ->assertForbidden();
+        $this->assertDatabaseMissing('channels', ['type' => 'private']);
+
+        // Withdrawing the request stays possible…
+        $this->signed($cred, 'POST', "/api/channels/{$channel->uuid}/leave")->assertOk();
+        $this->assertDatabaseMissing('channel_members', ['channel_id' => $channel->id, 'user_id' => $applicant->id]);
+    }
+
+    public function test_the_invited_side_of_a_private_chat_can_still_look_before_answering(): void
+    {
+        [$owner, $ownerCred] = $this->identity('owner');
+        $channel = $this->makeChannel($owner, 'open');
+        [$guest, $guestCred] = $this->identity('guest');
+        $this->signed($guestCred, 'POST', "/api/join/{$channel->invite_token}")->assertStatus(201);
+        $guestMember = $channel->members()->where('user_id', $guest->id)->firstOrFail();
+
+        $uuid = $this->signed($ownerCred, 'POST', "/api/channels/{$channel->uuid}/private", ['member_id' => $guestMember->id])
+            ->assertStatus(201)->json('uuid');
+
+        $this->signed($guestCred, 'GET', "/api/channels/{$uuid}")->assertOk()->assertJson(['my_status' => 'pending']);
+    }
+
+    public function test_answering_a_single_join_request_clears_the_owners_card_for_it(): void
+    {
+        [$owner, $ownerCred] = $this->identity('owner');
+        $channel = $this->makeChannel($owner);
+        [$applicant, $cred] = $this->identity('applicant');
+        [, $otherCred] = $this->identity('other');
+        $this->signed($cred, 'POST', "/api/join/{$channel->invite_token}")->assertStatus(201);
+        $this->signed($otherCred, 'POST', "/api/join/{$channel->invite_token}")->assertStatus(201);
+        $member = $channel->members()->where('user_id', $applicant->id)->firstOrFail();
+
+        $this->signed($ownerCred, 'POST', "/api/members/{$member->id}/decision", ['approve' => true])->assertOk();
+
+        // Only the other applicant's request is still waiting for the owner.
+        $open = collect($this->signed($ownerCred, 'GET', '/api/state')->json('notifications'))
+            ->where('type', 'join_request');
+        $this->assertCount(1, $open);
+        $this->assertNotSame($member->id, $open->first()['data']['member_id']);
+    }
+
+    public function test_a_deleted_file_does_not_leave_an_unread_badge_behind(): void
+    {
+        [$owner, $ownerCred] = $this->identity('owner');
+        $channel = $this->makeChannel($owner, 'open');
+        [$guest, $guestCred] = $this->identity('guest');
+        $this->signed($guestCred, 'POST', "/api/join/{$channel->invite_token}")->assertStatus(201);
+
+        $this->signed($guestCred, 'POST', "/api/channels/{$channel->uuid}/messages", ['body' => 'one'])->assertStatus(201);
+        $this->signed($guestCred, 'POST', "/api/channels/{$channel->uuid}/messages", ['body' => 'two'])->assertStatus(201);
+        // An upload whose file somebody removed: a tombstone no client lists.
+        Message::create([
+            'channel_id' => $channel->id, 'user_id' => $guest->id, 'author_alias' => 'guest', 'kind' => 'image',
+        ])->forceFill(['file_deleted_at' => now(), 'file_deleted_by' => 'guest'])->save();
+
+        $unread = fn (array $cred) => collect($this->signed($cred, 'GET', '/api/state')->assertOk()->json('channels'))
+            ->firstWhere('uuid', $channel->uuid)['unread'];
+
+        $this->assertSame(2, $unread($ownerCred));
+        $this->assertSame(0, $unread($guestCred)); // own messages never count
+
+        $lastVisible = Message::where('channel_id', $channel->id)->whereNull('file_deleted_at')->max('id');
+        $this->signed($ownerCred, 'POST', "/api/channels/{$channel->uuid}/read", ['message_id' => $lastVisible])->assertOk();
+
+        $this->assertSame(0, $unread($ownerCred));
     }
 }

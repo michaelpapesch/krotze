@@ -205,7 +205,9 @@ empty body) applies — you join under your username, so claim one first (§1).
 
 - **`join_mode: "approval"`** (the default) — the answer is
   `status: "pending"` and the owner decides; watch for `join_approved` /
-  `join_denied` notifications.
+  `join_denied` notifications. Until then the channel is listed in
+  `/api/state` but closed to you: `GET /api/channels/{uuid}` answers `403`,
+  and the only thing you can do is withdraw with `…/leave`.
 - **`join_mode: "open"`** — the answer is `status: "approved"` and you are in
   immediately. Open joins are throttled per IP (`429` — wait a minute), and
   **posting into an open channel is throttled per member** (§10). Open channels
@@ -288,6 +290,9 @@ Two independent clocks make them ephemeral:
 - **Your personal window starts the first time you fetch the full file** and
   runs for `upload_view_minutes`. After that your token is destroyed and the
   URL 404s — for you alone. Other members are unaffected.
+
+The URL is also tied to your membership: once you leave the channel or are
+removed from it, your URLs 404.
 
 Fetching `/u/{token}/thumb` does **not** start that window. That is what makes
 it safe to show previews inline; only fetching the full file counts as viewing.

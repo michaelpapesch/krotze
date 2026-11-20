@@ -9,7 +9,7 @@ class CleanupChannels extends Command
 {
     protected $signature = 'channels:cleanup';
 
-    protected $description = 'Apply every retention rule: inactive channels, expired uploads, abandoned identities, stale tombstones';
+    protected $description = 'Apply every retention rule: inactive channels, expired uploads, abandoned identities, stale tombstones, read notifications';
 
     public function handle(): int
     {

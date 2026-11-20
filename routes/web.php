@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\PushController;
 use App\Http\Controllers\Api\SessionController;
 use App\Models\Channel;
+use App\Models\ChannelMember;
 use App\Models\Setting;
 use App\Models\UploadView;
 use App\Support\SitePages;
@@ -140,6 +141,16 @@ Route::get('/u/{token}/{variant?}', function (string $token, ?string $variant = 
     }
     if ($view->viewWindowExpired()) {
         $view->update(['token' => null]);
+        abort(404);
+    }
+    // The token was handed to a member. Whoever left, was removed or deleted
+    // their identity since is no longer one, and the link dies with that.
+    $stillMember = ChannelMember::where('channel_id', $message->channel_id)
+        ->where('user_id', $view->user_id)
+        ->where('status', 'approved')
+        ->exists();
+    if (! $stillMember) {
+        $view->delete();
         abort(404);
     }
 

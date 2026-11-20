@@ -589,7 +589,15 @@ async function startBroadcast(s, media) {
     layout(s);
 
     if (media.mic) await startMic(s, media.mic).catch((e) => { stopTracks(media.mic); host.toastError(e); });
-    if (s.out !== out) return;
+    // Torn down while the microphone was starting: the teardown could not
+    // know about captures that were not attached yet, so release them here —
+    // otherwise the browser keeps showing the device as in use.
+    if (s.out !== out) {
+        stopMic(out);
+        stopTracks(media.mic);
+        stopTracks(media.video);
+        return;
+    }
     if (media.video) await startVideo(s, media.kind, media.video);
     if (s.out !== out) return;
 
@@ -781,11 +789,17 @@ async function toggleMic(s) {
     if (out.audio) {
         stopMic(out);
     } else {
+        let stream = null;
         try {
-            await startMic(s, await navigator.mediaDevices.getUserMedia(micConstraints));
+            stream = await navigator.mediaDevices.getUserMedia(micConstraints);
+            // The stream may have ended while the permission prompt was up.
+            if (s.out !== out) { stopTracks(stream); return; }
+            await startMic(s, stream);
         } catch (e) {
+            stopTracks(stream);
             host.toastError({ message: describeMediaError(e) });
         }
+        if (s.out !== out) stopMic(out);
     }
     if (s.out === out) announce(s);
 }

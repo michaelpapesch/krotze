@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Channel;
+use App\Models\ChatNotification;
 use App\Models\ChatUser;
 use App\Models\Message;
 use App\Models\Setting;
@@ -24,6 +25,9 @@ class Retention
     /** A file-deletion tombstone only has to outlive the pollers that show it. */
     public const TOMBSTONE_AFTER_HOURS = 1;
 
+    /** A read notification has no reader left; this is only a safety margin. */
+    public const READ_NOTIFICATION_AFTER_HOURS = 1;
+
     /** @return array<string, int> what was removed, for the command to report */
     public static function prune(): array
     {
@@ -32,6 +36,7 @@ class Retention
             'uploads' => self::expiredUploads(),
             'identities' => self::abandonedIdentities(),
             'tombstones' => self::staleTombstones(),
+            'notifications' => self::readNotifications(),
             'streams' => Stream::pruneStale(),
             'cache' => CacheGc::pruneExpired(),
         ];
@@ -98,6 +103,18 @@ class Retention
             ->get()
             ->each->delete()
             ->count();
+    }
+
+    /**
+     * A notification that was read is never shown again — `/api/state` only
+     * lists unread ones — yet the row names people and channels. Kept for a
+     * moment (a push for it may still be on its way out), then gone.
+     */
+    private static function readNotifications(): int
+    {
+        return ChatNotification::whereNotNull('read_at')
+            ->where('read_at', '<', now()->subHours(self::READ_NOTIFICATION_AFTER_HOURS))
+            ->delete();
     }
 
     /** Tombstones exist only to flash the deleter's name at other clients. */

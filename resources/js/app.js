@@ -741,6 +741,13 @@ function notifTitle(server) {
     return store.servers.length > 1 ? 'Krotze · ' + serverLabel(server) : 'Krotze';
 }
 
+/**
+ * Cards put off with "Later", by notification key. The list is redrawn on
+ * every poll, so without this the card would be back within seconds; it
+ * returns with the next start of the app instead.
+ */
+const postponedNotifs = new Set();
+
 function renderNotifications() {
     let host = document.getElementById('notif-host');
     if (!host) {
@@ -759,10 +766,11 @@ function renderNotifications() {
     const aggregated = new Set();
     for (const n of store.notifications) {
         let def;
+        let group = [n];
         if (n.type === 'join_request' && joinGroups[groupKey(n)]?.length > 1) {
             if (aggregated.has(groupKey(n))) continue;
             aggregated.add(groupKey(n));
-            const g = joinGroups[groupKey(n)];
+            const g = group = joinGroups[groupKey(n)];
             def = {
                 text: t(':count people want to join “:channel”', { count: g.length, channel: n.data.channel_name }),
                 actions: [{
@@ -770,7 +778,8 @@ function renderNotifications() {
                     style: 'ok',
                     run: async () => {
                         await openChannel(n.data.channel_uuid, n.server);
-                        pendingRequestsDialog(store.detail);
+                        // Opening can fail (channel gone, server unreachable).
+                        if (store.detail?.key === groupKey(n)) pendingRequestsDialog(store.detail);
                     },
                 }],
             };
@@ -785,6 +794,7 @@ function renderNotifications() {
             def = NOTIF_RENDER[n.type]?.(n);
         }
         if (!def) continue;
+        if (group.every((x) => postponedNotifs.has(x.key))) continue;
         const card = document.createElement('div');
         card.className = 'rounded-xl border border-white/15 bg-[#1d1a2b] p-4 shadow-xl break-words';
         card.innerHTML = `
@@ -802,7 +812,10 @@ function renderNotifications() {
                 danger: 'rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500',
                 plain: 'rounded-lg border border-white/20 px-3 py-1.5 text-xs hover:bg-white/10',
             }[a.style];
-            b.onclick = a.run ? () => a.run() : () => card.remove();
+            b.onclick = a.run ? () => a.run() : () => {
+                group.forEach((x) => postponedNotifs.add(x.key));
+                card.remove();
+            };
             btnRow.appendChild(b);
         }
         host.appendChild(card);
@@ -1013,7 +1026,10 @@ function notifyNewMessages(channels, seedOnly = false) {
         systemNotify(
             (c.type === 'private' ? last.username : `${c.name} · ${last.username}`)
                 + (several ? ` · ${serverLabel(c.server)}` : ''),
-            last.encrypted ? '🔒 ' + t('Encrypted message') : (last.excerpt || ''),
+            // The same promise the server keeps for the notifications it pushes.
+            notifySettings().hide_message_text
+                ? t('New message')
+                : (last.encrypted ? '🔒 ' + t('Encrypted message') : (last.excerpt || '')),
             { tag: 'chan-' + c.key, uuid: c.uuid, origin: c.server.home ? null : c.server.origin },
         );
     }
@@ -1378,6 +1394,8 @@ function renderEmpty() {
 /** A channel's detail, tagged with the server it came from. */
 async function fetchDetail(uuid, server) {
     const d = await api(`/channels/${uuid}`, { server });
+    d.retention_days = Number(d.retention_days) || 0;
+    for (const m of d.members || []) m.id = Number(m.id) || 0;
     d.server = server;
     d.key = chanKey(server, uuid);
     return d;
@@ -1744,18 +1762,56 @@ function plaintextOf(m) {
 
 /* ---------------------------- messages ---------------------------- */
 
+/** Only http(s) links may end up in an href or src — never `javascript:`. */
+function safeUrl(url) {
+    return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null;
+}
+
+/**
+ * A message as a server sent it. Servers the user added are not ours, so the
+ * fields that are written into markup as numbers or links are made to be
+ * exactly that before anything renders them.
+ */
+function cleanMessage(m) {
+    m.id = Number(m.id) || 0;
+    m.file_size = Number(m.file_size) || 0;
+    m.file_url = safeUrl(m.file_url);
+    m.thumb_url = safeUrl(m.thumb_url);
+    if (m.reply_to) m.reply_to.id = Number(m.reply_to.id) || 0;
+    return m;
+}
+
+/**
+ * Add the messages the open channel does not hold yet, in id order. A poll
+ * and a send can both deliver the same message, and two polls can overlap;
+ * merging by id is what keeps either from showing anything twice.
+ */
+function mergeMessages(incoming) {
+    const known = new Set(store.messages.map((m) => m.id));
+    const fresh = incoming.filter((m) => !known.has(m.id));
+    if (!fresh.length) return;
+    store.messages.push(...fresh);
+    store.messages.sort((a, b) => a.id - b.id);
+}
+
 async function loadMessages(initial = false) {
-    if (!store.current) return;
+    // While a channel is still opening, the pane on screen is the previous
+    // one — nothing may be loaded into it under the new channel's name.
+    if (!store.current || store.detail?.key !== store.current.key) return;
     const cur = store.current;
     try {
         const data = await api(`/channels/${cur.uuid}/messages?after=${initial ? 0 : store.lastMessageId}`, { server: cur.server });
         if (cur.key !== store.current?.key) return;
+        data.messages.forEach(cleanMessage);
         for (const del of data.deletions || []) flashDeleted(del.id, del.by);
         if (initial) store.messages = data.messages;
-        else if (data.messages.length) store.messages.push(...data.messages);
+        else if (data.messages.length) mergeMessages(data.messages);
         else return;
-        if (store.messages.length) {
-            store.lastMessageId = store.messages[store.messages.length - 1].id;
+        if (data.messages.length) {
+            // The cursor only ever moves with what a poll returned: a message
+            // of our own (see sendMessage) must not jump it past somebody
+            // else's that was posted just before and not fetched yet.
+            store.lastMessageId = Math.max(store.lastMessageId, data.messages[data.messages.length - 1].id);
             api(`/channels/${cur.uuid}/read`, { server: cur.server, body: { message_id: store.lastMessageId } }).catch(() => {});
             const ch = store.channels.find((c) => c.key === cur.key);
             if (ch && ch.unread) { ch.unread = 0; renderChannelList(); }
@@ -1882,7 +1938,10 @@ function flashDeleted(id, by) {
     m.file_url = null;
     m.thumb_url = null;
     renderMessages();
+    const key = store.current?.key;
     setTimeout(() => {
+        // Ids are only unique per server: another channel may be open by now.
+        if (store.current?.key !== key) return;
         store.messages = store.messages.filter((x) => x.id !== id);
         renderMessages();
     }, 4000);
@@ -2153,6 +2212,10 @@ async function sendMessage(e) {
     const input = document.getElementById('msg-input');
     const body = input.value.trim();
     if (!body) return;
+    // Mid-switch the composer still belongs to the previous channel; sending
+    // now would post there-typed text to the new one, encrypted by the old rules.
+    const cur = store.current;
+    if (!cur || store.detail?.key !== cur.key) return;
     input.value = '';
     input.style.height = 'auto';
     const payload = { body };
@@ -2165,16 +2228,21 @@ async function sendMessage(e) {
         payload.encrypted = true;
     }
     try {
-        const cur = store.current;
         const res = await api(`/channels/${cur.uuid}/messages`, { server: cur.server, body: payload });
         if (cur.key !== store.current?.key) return;
         store.replyTo = null;
         renderReplyBar();
-        if (encrypt) res.message._plain = body; // render own message instantly
-        store.messages.push(res.message);
-        store.lastMessageId = res.message.id;
+        mergeMessages([cleanMessage(res.message)]);
+        if (encrypt) { // render own message instantly
+            const own = store.messages.find((m) => m.id === res.message.id);
+            if (own) own._plain = body;
+        }
         renderMessages();
-    } catch (err) { toastError(err); }
+    } catch (err) {
+        // Do not lose what was typed (throttled, offline, …).
+        if (cur.key === store.current?.key && input.isConnected && !input.value) input.value = body;
+        toastError(err);
+    }
 }
 
 async function sendFile(e) {
@@ -2182,6 +2250,8 @@ async function sendFile(e) {
     e.target.value = '';
     if (!file) return;
     if (file.size > 50 * 1048576) { toastError({ message: t('Maximum file size is 50 MB.') }); return; }
+    const cur = store.current;
+    if (!cur || store.detail?.key !== cur.key) return; // still switching channels
     const fd = new FormData();
     fd.append('file', file);
     if (store.replyTo) fd.append('reply_to', store.replyTo.id);
@@ -2192,13 +2262,11 @@ async function sendFile(e) {
     }
     toastInfo(t('Uploading :name…', { name: file.name }));
     try {
-        const cur = store.current;
         const res = await api(`/channels/${cur.uuid}/messages`, { server: cur.server, body: fd });
         if (cur.key !== store.current?.key) return;
         store.replyTo = null;
         renderReplyBar();
-        store.messages.push(res.message);
-        store.lastMessageId = res.message.id;
+        mergeMessages([cleanMessage(res.message)]);
         renderMessages();
     } catch (err) { toastError(err); }
 }
@@ -2904,7 +2972,7 @@ async function joinFlow(inviteToken, server = homeServer()) {
         <h2 class="text-lg font-bold text-white break-words">${t('Join “:name”', { name: esc(info.name) })}</h2>
         ${chip ? `<p class="mt-1 text-xs text-zinc-500">${chip} ${esc(serverLabel(server))}</p>` : ''}
         <p class="mt-1 text-sm text-zinc-400">
-            ${t(':count member(s).', { count: info.members })}
+            ${t(':count member(s).', { count: Number(info.members) || 0 })}
             ${t('You will appear as :name.', { name: `<b class="text-zinc-200">${esc(server.state.username || '')}</b>` })}
             ${open
                 ? t('this channel has open join, so you will join immediately.')
@@ -3056,7 +3124,7 @@ async function profileDialog(server = store.server) {
                 ${dev.current
                     ? `<span class="shrink-0 rounded-full bg-violet-500/30 px-2 py-0.5 text-[11px] font-semibold text-violet-200">${t('this device')}</span>`
                     : `<span class="shrink-0 text-xs text-zinc-500">${dev.last_seen_at ? fmtTime(dev.last_seen_at) : ''}</span>`}
-                <button data-remove="${dev.id}" title="${dev.current ? t('Sign this device out') : t('Remove this device')}"
+                <button data-remove="${Number(dev.id) || 0}" title="${dev.current ? t('Sign this device out') : t('Remove this device')}"
                     class="shrink-0 rounded px-1.5 text-xs text-red-400 opacity-60 hover:opacity-100">✕</button>`;
             list.appendChild(row);
         }
@@ -3427,7 +3495,13 @@ async function deleteMeDialog(server = store.server) {
     if (!ok) return;
     try {
         await api('/me', { method: 'DELETE', server });
-    } catch { /* identity gone either way */ }
+    } catch (e) {
+        // A 401 means the server no longer knows this device — nothing left
+        // to delete there. Anything else (offline, a server error) means the
+        // data is still there, and forgetting the key now would leave nobody
+        // able to delete it.
+        if (e?.status !== 401) { toastError(e); return; }
+    }
 
     if (!server.home) {
         // Only that server is affected; the app keeps running on the rest.
@@ -3673,7 +3747,11 @@ async function removeServerDialog(server) {
     });
     if (!res) return;
     if (res.checked) {
-        try { await api('/me', { method: 'DELETE', server }); } catch { /* best effort */ }
+        // Asked to delete there too: only forget the key once that worked
+        // (or the server no longer knows this device anyway).
+        try { await api('/me', { method: 'DELETE', server }); } catch (e) {
+            if (e?.status !== 401) { toastError(e); return; }
+        }
     }
     await dropRelay(server).catch(() => {});
     removeServerLocally(server);
@@ -3735,9 +3813,19 @@ async function pollServer(server) {
                 renderEmpty();
             }
             toastInfo(t('Your registration was approved. Welcome!'));
+            // What boot skipped while this identity was still waiting.
+            ensureBoxKey(server);
+            if (server.home) enablePush();
+            else syncRelays();
         }
 
-        server.channels = data.channels.map((c) => Object.assign(c, { server, key: chanKey(server, c.uuid) }));
+        // Counts are written into markup as numbers; make sure they are.
+        server.channels = data.channels.map((c) => Object.assign(c, {
+            server,
+            key: chanKey(server, c.uuid),
+            unread: Number(c.unread) || 0,
+            pending_count: Number(c.pending_count) || 0,
+        }));
         const notes = data.notifications.map((n) => Object.assign(n, { server, key: notifKey(server, n.id) }));
 
         // Channel got a new uuid (invite rotation): follow it silently.

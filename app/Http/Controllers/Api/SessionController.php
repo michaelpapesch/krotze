@@ -92,6 +92,7 @@ class SessionController extends Controller
             ->filter(fn ($m) => $m->channel !== null);
 
         $latest = $this->latestMessages($memberships->pluck('channel_id')->all());
+        $unread = $this->unreadCounts($user);
 
         // Live streams running right now, per channel — one query for all.
         $live = Server::available();
@@ -102,7 +103,7 @@ class SessionController extends Controller
                 ->orderBy('id')->get()->groupBy('channel_id')
             : collect();
 
-        $channels = $memberships->map(function ($m) use ($user, $latest, $streams, $device) {
+        $channels = $memberships->map(function ($m) use ($user, $latest, $unread, $streams, $device) {
             $ch = $m->channel;
             $isOwner = $ch->owner_id === $user->id;
 
@@ -111,11 +112,6 @@ class SessionController extends Controller
                 $other = $ch->members->first(fn ($x) => $x->user_id !== $user->id);
                 $name = $other?->username() ?? 'Private chat';
             }
-
-            $unread = Message::where('channel_id', $ch->id)
-                ->where('id', '>', $m->last_read_message_id)
-                ->where(fn ($q) => $q->whereNull('user_id')->orWhere('user_id', '!=', $user->id))
-                ->count();
 
             return [
                 'uuid' => $ch->uuid,
@@ -131,7 +127,7 @@ class SessionController extends Controller
                 'pinned' => $m->pinned,
                 'hidden' => $m->hidden,
                 'muted' => $m->muted,
-                'unread' => $m->status === 'approved' ? $unread : 0,
+                'unread' => (int) $unread->get($ch->id, 0),
                 // Lets the client raise a notification for a message in a
                 // channel it does not currently have open.
                 'last_message' => $m->status === 'approved'
@@ -192,6 +188,30 @@ class SessionController extends Controller
             ->pluck('id');
 
         return Message::with('user')->whereIn('id', $ids)->get()->keyBy('channel_id');
+    }
+
+    /**
+     * Messages by other people that this user has not read yet, per channel
+     * they are approved in — one query for the whole list, since this runs on
+     * every poll. File-deletion tombstones do not count: no client is ever
+     * shown one, so it could never be marked read and the badge would stick
+     * until the tombstone is pruned.
+     *
+     * @return Collection<int, int> channel id => count (absent means none)
+     */
+    private function unreadCounts(ChatUser $user): Collection
+    {
+        return Message::query()
+            ->join('channel_members as cm', 'cm.channel_id', '=', 'messages.channel_id')
+            ->where('cm.user_id', $user->id)
+            ->where('cm.status', 'approved')
+            ->whereColumn('messages.id', '>', 'cm.last_read_message_id')
+            ->whereNull('messages.file_deleted_at')
+            ->where(fn ($q) => $q->whereNull('messages.user_id')->orWhere('messages.user_id', '!=', $user->id))
+            ->groupBy('messages.channel_id')
+            ->selectRaw('messages.channel_id, count(*) as unread')
+            ->toBase()
+            ->pluck('unread', 'channel_id');
     }
 
     private function messagePreview(?Message $message): ?array
