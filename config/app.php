@@ -25,7 +25,7 @@ return [
     |
     */
 
-    'version' => '2.16.4',
+    'version' => '2.16.5',
 
     // Public source repository, linked from the site navigation and landing page.
     'source_url' => env('SOURCE_URL', 'https://github.com/michaelpapesch/krotze'),

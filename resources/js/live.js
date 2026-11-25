@@ -1,4 +1,5 @@
 import { t } from './i18n.js';
+import { createMsePlayer, mseSupports } from './live-mse.js';
 
 /* ------------------------------------------------------------------ */
 /* Krotze live streams — voice, camera and screen sharing.              */
@@ -9,7 +10,9 @@ import { t } from './i18n.js';
 /* connection between clients, so members never learn each other's      */
 /* network address.                                                     */
 /*                                                                      */
-/*   video  WebCodecs (VP8, H.264 as fallback) → canvas                 */
+/*   video  WebCodecs (VP8, H.264 as fallback) → canvas; viewers whose  */
+/*          browser has no WebCodecs decoder (Firefox for Android) get  */
+/*          the same frames remuxed for a <video> via MSE (live-mse.js) */
 /*   audio  16 kHz mono µ-law (G.711), 40 ms packets → Web Audio        */
 /*                                                                      */
 /* Written against Chrome/Edge, Firefox and Safari (macOS and iOS):     */
@@ -243,8 +246,9 @@ function upsertStream(s, info) {
     let st = s.streams.get(info.id);
     if (!st) {
         st = {
-            id: info.id, info, decoder: null, needKey: true, lastKeyAsk: 0, painted: false,
+            id: info.id, info, decoder: null, player: null, needKey: true, lastKeyAsk: 0, painted: false,
             unsupported: undefined,                       // unknown until checkDecodable() answers
+            mode: null,                                   // 'webcodecs' | 'mse', set by checkDecodable()
             muted: false, gain: null, next: 0, resamplePos: -1, lastSample: 0,
         };
         st.tile = buildTile(s, st);
@@ -254,21 +258,35 @@ function upsertStream(s, info) {
         playbackContext(); // so the "enable sound" hint can show before audio arrives
     }
     const codecChanged = st.info.vconf?.codec !== info.vconf?.codec;
+    // The WebM header carries the picture size, so the MSE path starts over.
+    const sizeChanged = st.info.vconf?.width !== info.vconf?.width || st.info.vconf?.height !== info.vconf?.height;
     st.info = info;
-    if (!info.video || codecChanged) resetDecoder(st);
+    if (!info.video || codecChanged || (sizeChanged && st.mode === 'mse')) resetDecoder(st);
     if (info.vconf && (codecChanged || st.unsupported === undefined)) checkDecodable(st, info.vconf.codec);
     if (!info.video) st.painted = false;
     refreshTile(st);
 }
 
-/** Not every browser decodes every codec — find out before frames arrive. */
+/** Forces the MSE path in browsers that have WebCodecs — for testing only. */
+function forceMse() {
+    try { return localStorage.getItem('krotze_live_mse') === '1'; } catch { return false; }
+}
+
+/**
+ * Not every browser decodes every codec — find out before frames arrive.
+ * WebCodecs first; without it (Firefox for Android) the frames are remuxed
+ * and played by a <video> element through Media Source Extensions.
+ */
 async function checkDecodable(st, codec) {
-    let supported = false;
+    let mode = null;
     try {
-        supported = 'VideoDecoder' in window && (await VideoDecoder.isConfigSupported({ codec })).supported;
-    } catch { /* treated as unsupported */ }
+        if (!forceMse() && 'VideoDecoder' in window && (await VideoDecoder.isConfigSupported({ codec })).supported) mode = 'webcodecs';
+    } catch { /* try MSE */ }
+    if (!mode && mseSupports(codec)) mode = 'mse';
     if (st.info.vconf?.codec !== codec) return; // changed meanwhile
-    st.unsupported = !supported;
+    if (st.mode !== mode) resetDecoder(st);
+    st.mode = mode;
+    st.unsupported = !mode;
     refreshTile(st);
 }
 
@@ -276,11 +294,31 @@ function resetDecoder(st) {
     if (st.decoder && st.decoder.state !== 'closed') {
         try { st.decoder.close(); } catch { /* already closed */ }
     }
+    st.player?.close();
     st.decoder = null;
+    st.player = null;
     st.needKey = true;
+    st.painted = false;
+}
+
+function ensurePlayer(st) {
+    if (st.player || st.mode !== 'mse' || !st.info.vconf) return;
+    const player = createMsePlayer(st.tile.querySelector('video'), st.info.vconf, {
+        onPlaying: () => {
+            if (st.player !== player) return;
+            st.painted = true;
+            refreshTile(st);
+        },
+        // A broken stream: start over at the next keyframe.
+        onError: () => {
+            if (st.player === player) { st.player = null; st.needKey = true; }
+        },
+    });
+    st.player = player;
 }
 
 function ensureDecoder(st) {
+    if (st.mode === 'mse') { ensurePlayer(st); return; }
     if (st.decoder || st.unsupported !== false || !st.info.vconf) return;
     const decoder = new VideoDecoder({
         output: (frame) => paint(st, frame),
@@ -330,14 +368,20 @@ function onMedia(s, buffer) {
         ensureDecoder(st);
         st.needKey = false;
     }
+    const sink = st.mode === 'mse' ? st.player : st.decoder;
     // Behind by a lot (a slow device): skip ahead to the next keyframe.
     if (st.decoder && st.decoder.decodeQueueSize > 12) st.needKey = true;
-    if (!st.decoder || st.needKey) {
+    if (st.player && st.player.backlog > 30) { resetDecoder(st); st.needKey = true; }
+    if (!sink || st.needKey || (st.mode === 'mse' && !st.player)) {
         const now = Date.now();
         if (!st.unsupported && now - st.lastKeyAsk > 2000) {
             st.lastKeyAsk = now;
             control(s, { t: 'keyframe', id: st.id });
         }
+        return;
+    }
+    if (st.mode === 'mse') {
+        st.player.push(kind === KIND_KEY, view.getUint32(5), data);
         return;
     }
     try {
@@ -837,7 +881,8 @@ function buildTile(s, st) {
     tile.innerHTML = `
         ${own
             ? '<video muted playsinline autoplay class="hidden h-full w-full object-contain"></video>'
-            : '<canvas class="hidden h-full w-full object-contain"></canvas>'}
+            : `<canvas class="hidden h-full w-full object-contain"></canvas>
+               <video muted playsinline class="hidden h-full w-full object-contain"></video>`}
         <div data-note class="absolute inset-0 flex flex-col items-center justify-center gap-1 p-2 text-center text-xs text-zinc-400"></div>
         <div class="absolute inset-x-0 bottom-0 flex items-center gap-1 bg-gradient-to-t from-black/80 to-transparent px-2 pb-1 pt-4 text-xs text-white">
             <span data-name class="min-w-0 flex-1 truncate"></span>
@@ -866,7 +911,8 @@ function tileLabel(name, audio, video) {
 function refreshTile(st) {
     const { info, tile } = st;
     const showVideo = !!info.video && st.painted && !st.unsupported;
-    tile.querySelector('canvas').classList.toggle('hidden', !showVideo);
+    tile.querySelector('canvas').classList.toggle('hidden', !showVideo || st.mode === 'mse');
+    tile.querySelector('video').classList.toggle('hidden', !showVideo || st.mode !== 'mse');
     tile.querySelector('[data-name]').innerHTML = tileLabel(info.username, info.audio, info.video);
     const note = tile.querySelector('[data-note]');
     note.classList.toggle('hidden', showVideo);

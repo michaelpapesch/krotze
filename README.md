@@ -89,9 +89,11 @@ Live: https://krotze.com
   Streams are **relayed through the server over WebSockets — never peer to
   peer**: there is no WebRTC, STUN or TURN, so members do not learn each
   other's IP address. The honest limits: streams are not end-to-end encrypted
-  (the relay forwards the frames without decoding or recording them), video
-  needs a browser with WebCodecs (Chrome/Edge 94+, Safari 16.4+, Firefox
-  130+; voice works wherever AudioWorklet does), screen sharing is not
+  (the relay forwards the frames without decoding or recording them), sending
+  video needs a browser with WebCodecs (Chrome/Edge 94+, Safari 16.4+, Firefox
+  130+ on the desktop), watching works there and wherever Media Source
+  Extensions play VP8 or H.264 (e.g. Firefox for Android); voice works wherever
+  AudioWorklet does, screen sharing is not
   available on phones, and leaving the channel ends your own stream. The
   feature is off until the relay is configured (see *Live streams* in
   [DEPLOYMENT.md](DEPLOYMENT.md)) and hides itself whenever it is not running.
@@ -203,7 +205,9 @@ Live: https://krotze.com
   first socket message; the relay re-checks membership and stream rights
   against the database every ten seconds. Browsers encode video with WebCodecs
   (VP8, H.264 as fallback) and audio as 16 kHz µ-law in an AudioWorklet
-  (`resources/js/live.js`); the server fans the opaque frames out to the
+  (`resources/js/live.js`); viewers without a WebCodecs decoder get the same
+  frames remuxed into WebM / fragmented MP4 for a `<video>` element via Media
+  Source Extensions (`resources/js/live-mse.js`); the server fans the opaque frames out to the
   channel's room and, for a viewer that cannot keep up, drops video until the
   next keyframe instead of slowing the streamer down. Running streams are
   announced through `/api/state`, which is what makes them start by themselves.
