@@ -268,6 +268,42 @@ the participants' devices; the server stores an opaque envelope it cannot read.
 - Encrypted messages carry `encrypted: true`; previews (`last_message`,
   reply excerpts, push bodies) have no text for them — render a placeholder.
 
+The envelope above (`v:1`) is what older clients send. Current clients use the
+**Double Ratchet** (`v:3`) as soon as every participant device has published a
+prekey — forward secrecy and post-compromise security, as in Signal:
+
+- **Prekeys.** Besides its identity key every device registers a prekey
+  (`POST /api/profile/devices/key` with `prekey` and `prekey_id`) and replaces
+  it about weekly, keeping the private halves of the last few. The private
+  conversation's `devices` list both.
+- **Sessions** run between two *devices*. The first message of a session
+  carries an X3DH prefix `i: {ik, ek, spk}` (sender identity key, ephemeral
+  key, the prekey id used); the receiver derives
+  `SK = HKDF(0xFF×32 ‖ DH(IKa,SPKb) ‖ DH(EKa,IKb) ‖ DH(EKa,SPKb))`
+  (salt 32 zero bytes, info `krotze-x3dh`). Prekeys are not signed: a prekey
+  swapped by the server still leaves `DH(EKa,IKb)`, which only the real device
+  can compute; identities are checked with the safety number. There are no
+  one-time prekeys.
+- **Ratchet** exactly as in the Signal specification: root KDF = HKDF-SHA256
+  (salt = root key, info `krotze-dr-root`, 64 bytes → root key ‖ chain key),
+  chain KDF = HMAC-SHA256(chain key, 0x01) for the message key and
+  (…, 0x02) for the next chain key, up to 1000 skipped keys per step.
+  The message key becomes the secretbox key and nonce via HKDF (info
+  `krotze-dr-msg|<ad>|<header>`, 56 bytes), so the header text and
+  `ad` = `<channel uuid>|<identity keys of both devices, sorted>` are
+  authenticated.
+- **Envelope.**
+  `{"v":3,"s":"<sender device id>","to":{"<device id>":{"h":"<header JSON>","c":"<base64>"}}}`
+  — one ratchet message for every other device of the conversation, the
+  sender's own included. `h` is sent as the exact JSON text it was
+  authenticated with: `{"dh","pn","n"}`, plus `i` until the peer has answered
+  on the session. The sending device keeps its own plaintext.
+- **Keeping history.** A message key works exactly once, so a client stores the
+  plaintext of what it decrypted (the Krotze app: IndexedDB, per device) and
+  shows that on later loads. If a device loses its state, messages to it stay
+  unreadable until it sends again — its next message starts a fresh session,
+  and the peer answers on that one.
+
 ### End-to-end encrypted channels
 
 Group channels with `e2ee: true` encrypt text **and uploads** with a symmetric

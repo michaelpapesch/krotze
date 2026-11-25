@@ -47,6 +47,12 @@ function boxKeys() {
     return pair;
 }
 
+/** This device's identity keypair as base64 — for the Double Ratchet (ratchet.js). */
+export function identityKeyPair() {
+    const k = boxKeys();
+    return { pub: b64(k.publicKey), sec: b64(k.secretKey) };
+}
+
 /** Base64 public key, the only part that ever leaves the device. */
 export function boxPublicKey() {
     return b64(boxKeys().publicKey);

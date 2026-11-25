@@ -3,9 +3,10 @@ import jsQR from 'jsqr';
 import { base32, hex, hmacSha256, open as unseal, randomBytes, seal, sha256 } from './crypto.js';
 import { LANGS, dir, getLang, setLang, t } from './i18n.js';
 import {
-    boxPublicKey, channelEnvelopeEpoch, decryptEnvelope, encryptFor, newChannelKey, openBytes, openFromChannel,
-    safetyNumber, sealBytes, sealForChannel, unwrapChannelKey, wrapChannelKey,
+    boxPublicKey, channelEnvelopeEpoch, decryptEnvelope, encryptFor, identityKeyPair, newChannelKey, openBytes,
+    openFromChannel, safetyNumber, sealBytes, sealForChannel, unwrapChannelKey, wrapChannelKey,
 } from './e2ee.js';
+import { currentPrekey, isRatchetEnvelope, openPrivate, prunePrivate, rememberPrivate, sealPrivate } from './private-ratchet.js';
 import { canCapture, canEncodeVideo, canShareScreen, initLive, liveMount, liveStart, liveStatus, liveSync, liveWatch } from './live.js';
 
 /* ------------------------------------------------------------------ */
@@ -1734,12 +1735,58 @@ function memberDialog(m) {
 async function ensureBoxKey(server = homeServer()) {
     if (!usableServer(server)) return;
     const pub = boxPublicKey();
-    if (server.boxkeySent === pub) return;
+    // The prekey (Double Ratchet, X3DH) rotates weekly; a new one is sent
+    // like a changed identity key.
+    const prekey = currentPrekey();
+    const marker = `${pub}|${prekey.id}`;
+    if (server.boxkeySent === marker) return;
     try {
-        await api('/profile/devices/key', { server, body: { public_key: pub } });
-        server.boxkeySent = pub;
+        await api('/profile/devices/key', { server, body: { public_key: pub, prekey: prekey.pub, prekey_id: prekey.id } });
+        server.boxkeySent = marker;
         saveServers();
     } catch { /* retried on the next boot */ }
+}
+
+/**
+ * Private conversations use the Double Ratchet once every participant
+ * device has published a prekey; until then (a partner on an old client)
+ * messages go out in the older per-message envelope.
+ */
+function ratchetReady(d) {
+    return e2eeReady(d) && d.devices.every((x) => x.key && x.prekey && Number.isInteger(x.prekey_id));
+}
+
+/** This device as the ratchet code needs it. */
+function ratchetSelf(server) {
+    return { serverId: server.id, deviceId: server.identity.id, ik: identityKeyPair() };
+}
+
+// Channel keys whose Double Ratchet messages are being opened right now.
+const privateDecrypting = new Set();
+
+/**
+ * Open the not-yet-read Double Ratchet messages of the open conversation,
+ * oldest first (the order the chains advance in), then re-render. Plaintext
+ * a device has opened once comes from its local store from then on.
+ */
+async function decryptPrivateMessages(cur) {
+    if (privateDecrypting.has(cur.key)) return;
+    privateDecrypting.add(cur.key);
+    try {
+        const me = ratchetSelf(cur.server);
+        for (;;) {
+            if (store.current?.key !== cur.key) return;
+            const todo = store.messages.filter((m) => m._ratchet && m._plain === undefined).sort((a, b) => a.id - b.id);
+            if (!todo.length) break;
+            for (const m of todo) {
+                m._plain = await openPrivate(me, cur.uuid, m.id, m.body).catch(() => null);
+                if (store.current?.key !== cur.key) return;
+            }
+        }
+        renderMessages();
+    } finally {
+        privateDecrypting.delete(cur.key);
+    }
 }
 
 /** True when every participant of this private conversation can decrypt. */
@@ -1760,6 +1807,12 @@ function e2eeReady(d) {
  */
 function plaintextOf(m) {
     if (!m.encrypted) return m.body;
+    // Double Ratchet (private conversations): opened asynchronously, in order.
+    if (m._ratchet === undefined) m._ratchet = isRatchetEnvelope(m.body);
+    if (m._ratchet) {
+        if (m._plain === undefined && store.current) decryptPrivateMessages(store.current);
+        return m._plain;
+    }
     if (m._plain === undefined) {
         if (channelEnvelopeEpoch(m.body) !== null) {
             const text = openChannelEnvelope(m.body);
@@ -2542,11 +2595,16 @@ async function sendMessage(e) {
     // Encrypted group channels seal it with the current channel key.
     const sealedChannel = store.detail.type === 'group' && store.detail.e2ee;
     const encrypt = sealedChannel || e2eeReady(store.detail);
-    if (encrypt && !sealedChannel) {
-        payload.body = encryptFor(body, store.detail.devices);
-        payload.encrypted = true;
-    }
+    const ratchet = !sealedChannel && ratchetReady(store.detail);
     try {
+        if (ratchet) {
+            await ensureBoxKey(cur.server);
+            payload.body = await sealPrivate(ratchetSelf(cur.server), cur.uuid, store.detail.devices, body);
+            payload.encrypted = true;
+        } else if (encrypt && !sealedChannel) {
+            payload.body = encryptFor(body, store.detail.devices);
+            payload.encrypted = true;
+        }
         const res = sealedChannel
             ? await postSealed(cur, ({ epoch, key }) => ({ ...payload, body: sealForChannel(body, key, epoch), encrypted: true }))
             : await api(`/channels/${cur.uuid}/messages`, { server: cur.server, body: payload });
@@ -2558,6 +2616,8 @@ async function sendMessage(e) {
             const own = store.messages.find((m) => m.id === res.message.id);
             if (own) own._plain = body;
         }
+        // The envelope holds no copy for the sending device: keep the text.
+        if (ratchet) rememberPrivate(cur.server.id, cur.uuid, res.message.id, body).catch(() => {});
         renderMessages();
     } catch (err) {
         // Do not lose what was typed (throttled, offline, …).
@@ -4214,6 +4274,13 @@ async function pollServer(server) {
             pending_count: Number(c.pending_count) || 0,
         }));
         const notes = data.notifications.map((n) => Object.assign(n, { server, key: notifKey(server, n.id) }));
+
+        // Once per page load: forget stored plaintext of private conversations
+        // that were destroyed (or left) since — the server already did.
+        if (!server._prunedPrivate) {
+            server._prunedPrivate = true;
+            prunePrivate(server.id, server.channels.filter((c) => c.type === 'private').map((c) => c.uuid)).catch(() => {});
+        }
 
         // Channel got a new uuid (invite rotation): follow it silently.
         const moves = notes.filter((n) => n.type === 'channel_moved');

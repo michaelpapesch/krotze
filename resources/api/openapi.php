@@ -413,6 +413,8 @@ MD,
                             'id' => $string('The device\'s public id, used as the key of its wrap in the envelope.'),
                             'user_id' => $int(),
                             'key' => $string('X25519 public key, base64.'),
+                            'prekey' => $nullable('string', 'Double Ratchet prekey, base64; null for a client that does not speak it yet.'),
+                            'prekey_id' => $nullable('integer'),
                         ])],
                     ['type' => 'null'],
                 ]],
@@ -585,6 +587,10 @@ MD,
                 .'with `encrypted: true`. A device without a wrap — added after the message was sent — cannot decrypt it.',
             'requestBody' => $body($object([
                 'public_key' => $string('X25519 public key, base64 (44 characters).'),
+                'prekey' => $string('Double Ratchet prekey (X25519, base64), with `prekey_id`. Optional — leaving it out keeps the '
+                    .'registered one. Replace it about weekly; keep the private halves of the last few to open first messages '
+                    .'built on them.'),
+                'prekey_id' => $int('Your own counter for the prekey, sent back in the X3DH header of first messages.'),
             ], ['public_key'])),
             'responses' => ['200' => $json('Registered.', $ref('Ok')), '422' => $errorRef('ValidationFailed')] + $signedErrors,
         ]],
@@ -1020,7 +1026,8 @@ MD,
                     'required' => true,
                     'content' => [
                         'application/json' => ['schema' => $object([
-                            'body' => $string('Up to 5000 characters — or, with `encrypted: true`, the E2EE envelope (up to 64 KB).'),
+                            'body' => $string('Up to 5000 characters — or, with `encrypted: true`, the E2EE envelope (up to 256 KB: a '
+                                .'Double Ratchet envelope carries one ciphertext per recipient device).'),
                             'encrypted' => $bool('`body` is an end-to-end encrypted envelope: in private conversations the '
                                 .'per-message envelope (see `POST /api/profile/devices/key`), in `e2ee` group channels the channel '
                                 .'envelope `{v:2, e, n, ct}` (see `GET /api/channels/{uuid}/keys`). Required in `e2ee` channels, '

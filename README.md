@@ -70,12 +70,14 @@ Live: https://krotze.com
 - **Private 1:1 conversations** — click a member's name in the unfoldable
   member list to request a private chat; the other side must accept. Both
   participants have a destroy button that deletes the conversation for both.
-  Their text messages are **end-to-end encrypted**: each device holds an
-  X25519 keypair (`resources/js/e2ee.js`, tweetnacl), messages are sealed
-  with a per-message key wrapped for every participant device, and the
-  server stores only the envelope. Devices paired later cannot read earlier
-  messages (by design); previews and push bodies show a lock instead of
-  text.
+  Their text messages are **end-to-end encrypted with the Double Ratchet**
+  (X3DH with weekly prekeys, then the Signal ratchet per pair of devices —
+  `resources/js/ratchet.js`, tweetnacl): every message key is used once and
+  forgotten (forward secrecy), and a stolen state heals with the next reply
+  (post-compromise security). Read messages are kept in the browser's
+  IndexedDB so the history survives a reload; several open tabs coordinate
+  through Web Locks. Devices paired later cannot read earlier messages (by
+  design); previews and push bodies show a lock instead of text.
 - **End-to-end encrypted channels** — group channels (except open-join ones)
   encrypt messages and uploads with a channel key that every member device
   receives wrapped for its own box key. The key changes whenever the member

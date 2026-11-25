@@ -79,11 +79,18 @@ class ProfileController extends Controller
     {
         $data = $request->validate([
             'public_key' => 'required|string|size:44|regex:#^[A-Za-z0-9+/]{43}=$#',
+            // Double Ratchet prekey (X3DH), replaced weekly by the device.
+            'prekey' => 'nullable|required_with:prekey_id|string|size:44|regex:#^[A-Za-z0-9+/]{43}=$#',
+            'prekey_id' => 'nullable|required_with:prekey|integer|min:1|max:2147483647',
         ]);
 
         /** @var ChatDevice $device */
         $device = $request->attributes->get('chatDevice');
-        $device->forceFill(['public_key' => $data['public_key']])->save();
+        $device->forceFill(['public_key' => $data['public_key']]);
+        if (! empty($data['prekey'])) {
+            $device->forceFill(['prekey' => $data['prekey'], 'prekey_id' => $data['prekey_id']]);
+        }
+        $device->save();
 
         return response()->json(['ok' => true]);
     }

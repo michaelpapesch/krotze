@@ -195,8 +195,10 @@ class MessageController extends Controller
             if ($encrypted && $channel->type !== 'private' && ! $channel->e2ee) {
                 return response()->json(['error' => 'This channel is not end-to-end encrypted.'], 422);
             }
+            // A Double Ratchet envelope holds one ciphertext per recipient
+            // device, so it grows with the number of devices.
             $data = $request->validate([
-                'body' => 'required|string|max:'.($encrypted ? 65535 : 5000),
+                'body' => 'required|string|max:'.($encrypted ? 262144 : 5000),
             ]);
 
             $message = Message::create([

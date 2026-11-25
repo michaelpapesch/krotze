@@ -101,6 +101,9 @@ class ChannelController extends Controller
                     'id' => $d->public_id,
                     'user_id' => $d->user_id,
                     'key' => $d->public_key,
+                    // Present once the device speaks the Double Ratchet.
+                    'prekey' => $d->prekey,
+                    'prekey_id' => $d->prekey_id,
                 ])->values();
         }
 
