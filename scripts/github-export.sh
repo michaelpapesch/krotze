@@ -18,11 +18,15 @@
 #   6. commits "Krotze <version>" on top of the GitHub history and pushes.
 #
 # HEAD is exported, not the working tree: commit first.
-# Override the target with GITHUB_REMOTE=<url>.
+# Override the target with GITHUB_REMOTE=<url>, the public commit identity
+# with GITHUB_AUTHOR_NAME / GITHUB_AUTHOR_EMAIL (the e-mail must belong to the
+# GitHub account, or GitHub does not credit the commits to it).
 
 set -euo pipefail
 
 REMOTE="${GITHUB_REMOTE:-https://github.com/michaelpapesch/krotze.git}"
+AUTHOR_NAME="${GITHUB_AUTHOR_NAME:-michael papesch}"
+AUTHOR_EMAIL="${GITHUB_AUTHOR_EMAIL:-michaelpapesch@gmx.de}"
 EXCLUDE=(HOSTING.md DEPLOYMENT.md CLAUDE.md .github-export-deny)
 MARK_BEGIN='BEGIN site-specific'
 MARK_END='END site-specific'
@@ -105,7 +109,7 @@ if git diff --cached --quiet; then
     exit 0
 fi
 
-git commit -q -m "Krotze $version"
+git -c user.name="$AUTHOR_NAME" -c user.email="$AUTHOR_EMAIL" commit -q -m "Krotze $version"
 echo "-> commit $(git rev-parse --short HEAD): Krotze $version"
 git show --stat --format= HEAD | tail -n 25
 
