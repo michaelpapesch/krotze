@@ -298,6 +298,13 @@ prekey — forward secrecy and post-compromise security, as in Signal:
   sender's own included. `h` is sent as the exact JSON text it was
   authenticated with: `{"dh","pn","n"}`, plus `i` until the peer has answered
   on the session. The sending device keeps its own plaintext.
+- **Files.** Uploads are sealed with a fresh random 32-byte key: `file` and
+  the optional `thumb` (a JPEG preview made in the browser) are 24-byte
+  nonce ‖ secretbox, posted with `encrypted=1` and `kind` like uploads to
+  encrypted channels. The `body` is an ordinary end-to-end encrypted message
+  (`v:3`, or `v:1` while a device lacks a prekey) whose plaintext is
+  `{"name","mime","size","k"}` — `k` is the file key, base64. The server stores
+  the bytes as they are and never learns name or type.
 - **Keeping history.** A message key works exactly once, so a client stores the
   plaintext of what it decrypted (the Krotze app: IndexedDB, per device) and
   shows that on later loads. If a device loses its state, messages to it stay

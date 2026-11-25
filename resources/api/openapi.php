@@ -1039,11 +1039,13 @@ MD,
                             'thumb' => $string('Optional poster frame for a video, max 2 MB. In `e2ee` channels: the sealed '
                                 .'thumbnail of an image or video, stored as it is.', ['format' => 'binary']),
                             'reply_to' => $int(),
-                            'encrypted' => $bool('`e2ee` channels only, and required there: `file` (and `thumb`) are sealed with '
-                                .'the channel key, and `body` is a channel envelope holding name, type and size.'),
-                            'kind' => $string('`e2ee` uploads only: what the sealed file is — the server cannot look.',
+                            'encrypted' => $bool('Sealed upload. Required in `e2ee` channels: `file` (and `thumb`) are sealed with the channel '
+                                .'key, `body` is a channel envelope holding name, type and size. In private conversations: sealed with '
+                                .'a random file key, and `body` is an end-to-end encrypted envelope (`v:1` or `v:3`) of '
+                                .'`{name, mime, size, k}`, `k` being that key (base64).'),
+                            'kind' => $string('Sealed uploads only: what the sealed file is — the server cannot look.',
                                 ['enum' => ['image', 'audio', 'video', 'zip']]),
-                            'body' => $string('`e2ee` uploads only: the channel envelope with the file\'s metadata.'),
+                            'body' => $string('Sealed uploads only: the envelope with the file\'s metadata (and, in private conversations, its key).'),
                         ], ['file'])],
                     ],
                 ],

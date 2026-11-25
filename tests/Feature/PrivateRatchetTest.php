@@ -6,7 +6,10 @@ use App\Models\Channel;
 use App\Models\ChannelMember;
 use App\Models\ChatDevice;
 use App\Models\ChatUser;
+use App\Models\Message;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -74,6 +77,50 @@ class PrivateRatchetTest extends TestCase
             ->assertStatus(422);
         $this->signed($credA, 'POST', '/api/profile/devices/key', ['public_key' => $identity, 'prekey' => 'x', 'prekey_id' => 1])
             ->assertStatus(422);
+    }
+
+    /** Multipart uploads sign the hash of an empty body. */
+    private function upload(array $cred, string $path, array $fields)
+    {
+        $ts = (string) time();
+        $nonce = bin2hex(random_bytes(16));
+        $sig = hash_hmac('sha256', implode("\n", ['POST', $path, $ts, $nonce, hash('sha256', '')]), $cred['secret']);
+
+        return $this->withHeaders([
+            'X-Chat-Device' => $cred['device_id'], 'X-Chat-Ts' => $ts, 'X-Chat-Nonce' => $nonce, 'X-Chat-Sig' => $sig,
+            'Accept' => 'application/json',
+        ])->post($path, $fields);
+    }
+
+    public function test_sealed_uploads_are_stored_opaque_and_plain_ones_still_work(): void
+    {
+        Storage::fake('uploads');
+        [$a, , $credA] = $this->identity();
+        [$b] = $this->identity();
+        $channel = $this->privateChannel($a, $b);
+        $path = "/api/channels/{$channel->uuid}/messages";
+
+        $sealed = random_bytes(300);
+        $envelope = '{"v":3,"s":"x","to":{"d":{"h":"{}","c":"'.str_repeat('B', 20000).'"}}}';
+        $res = $this->upload($credA, $path, [
+            'file' => UploadedFile::fake()->createWithContent('sealed.bin', $sealed),
+            'thumb' => UploadedFile::fake()->createWithContent('preview.bin', random_bytes(50)),
+            'kind' => 'video',
+            'encrypted' => '1',
+            'body' => $envelope,
+        ])->assertCreated();
+
+        $message = Message::find($res->json('message.id'));
+        $this->assertTrue($message->encrypted);
+        $this->assertSame('video', $message->kind);
+        $this->assertNull($message->file_name);
+        $this->assertSame($envelope, $message->body);
+        $this->assertSame($sealed, Storage::disk('uploads')->get($message->file_path));
+        $this->assertNull($message->preview()['excerpt']);
+
+        // An older client still uploads in the clear.
+        $this->upload($credA, $path, ['file' => UploadedFile::fake()->image('photo.png', 20, 20)])
+            ->assertCreated()->assertJsonPath('message.encrypted', false)->assertJsonPath('message.file_name', 'photo.png');
     }
 
     public function test_ratchet_envelopes_may_be_large_but_not_unbounded(): void

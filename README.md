@@ -70,7 +70,7 @@ Live: https://krotze.com
 - **Private 1:1 conversations** — click a member's name in the unfoldable
   member list to request a private chat; the other side must accept. Both
   participants have a destroy button that deletes the conversation for both.
-  Their text messages are **end-to-end encrypted with the Double Ratchet**
+  Their messages and files are **end-to-end encrypted with the Double Ratchet**
   (X3DH with weekly prekeys, then the Signal ratchet per pair of devices —
   `resources/js/ratchet.js`, tweetnacl): every message key is used once and
   forgotten (forward secrecy), and a stolen state heals with the next reply

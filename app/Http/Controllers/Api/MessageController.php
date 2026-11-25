@@ -122,7 +122,11 @@ class MessageController extends Controller
             }
         }
 
-        if ($request->hasFile('file') && $channel->e2ee) {
+        // Sealed uploads: always in encrypted channels; in private
+        // conversations whenever the client sends one (older clients upload
+        // in the clear, as before).
+        $sealedUpload = $channel->e2ee || ($channel->type === 'private' && $request->boolean('encrypted'));
+        if ($request->hasFile('file') && $sealedUpload) {
             $message = $this->storeEncryptedFile($request, $channel, $user, $replyToId);
             if (! $message instanceof Message) {
                 return $message;
@@ -271,9 +275,10 @@ class MessageController extends Controller
     }
 
     /**
-     * An upload to an end-to-end encrypted channel: the file (and the
-     * optional thumbnail) are ciphertext the client sealed with the channel
-     * key, and name, type and size travel inside the `body` envelope. The
+     * A sealed upload — to an end-to-end encrypted channel (sealed with the
+     * channel key) or to a private conversation (sealed with a random file
+     * key that travels, with name, type and size, inside the end-to-end
+     * encrypted `body` envelope). The
      * server stores the bytes as they are — it cannot thumbnail or inspect
      * them — and trusts the declared `kind` only for the channel's upload
      * switches.
@@ -284,7 +289,8 @@ class MessageController extends Controller
             'file' => 'required|file|max:51300',  // 50 MB plus the seal
             'thumb' => 'nullable|file|max:2048',
             'kind' => 'required|in:image,audio,video,zip',
-            'body' => 'required|string|max:4096',
+            // A private conversation's envelope holds one copy per device.
+            'body' => 'required|string|max:'.($channel->type === 'private' ? 262144 : 4096),
         ]);
 
         $allowedFlag = ['image' => 'allow_images', 'video' => 'allow_videos',

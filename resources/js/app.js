@@ -7,6 +7,7 @@ import {
     openFromChannel, safetyNumber, sealBytes, sealForChannel, unwrapChannelKey, wrapChannelKey,
 } from './e2ee.js';
 import { currentPrekey, isRatchetEnvelope, openPrivate, prunePrivate, rememberPrivate, sealPrivate } from './private-ratchet.js';
+import { b64, b64d } from './ratchet.js';
 import { canCapture, canEncodeVideo, canShareScreen, initLive, liveMount, liveStart, liveStatus, liveSync, liveWatch } from './live.js';
 
 /* ------------------------------------------------------------------ */
@@ -1836,7 +1837,11 @@ function fileMeta(m) {
     if (json === undefined || json === null) return json;
     try {
         const meta = JSON.parse(json);
-        return { name: String(meta.name || ''), mime: String(meta.mime || ''), size: Number(meta.size) || 0 };
+        return {
+            name: String(meta.name || ''), mime: String(meta.mime || ''), size: Number(meta.size) || 0,
+            // Private conversations: the file's own key travels with its metadata.
+            key: typeof meta.k === 'string' ? meta.k : null,
+        };
     } catch {
         return null;
     }
@@ -1918,6 +1923,19 @@ async function messageKey(ch, m) {
 }
 
 /**
+ * The key a sealed upload was encrypted with: in an encrypted channel the
+ * channel key of its epoch, in a private conversation the file key inside
+ * its (end-to-end encrypted) metadata.
+ */
+async function uploadKey(ch, m) {
+    if (channelEnvelopeEpoch(m.body) !== null) return messageKey(ch, m);
+    let key = null;
+    try { key = fileMeta(m)?.key ? b64d(fileMeta(m).key) : null; } catch { /* malformed */ }
+    if (!key || key.length !== 32) throw new Error(t('This file cannot be decrypted on this device.'));
+    return key;
+}
+
+/**
  * The key to seal with right now. When the member devices changed (or there
  * is no key yet) this device starts the next epoch: a fresh key, wrapped for
  * every member device. A 409 means someone else was faster or the devices
@@ -1984,7 +2002,7 @@ function safeBlobType(mime, kind) {
 async function encryptedFileUrl(ch, m) {
     if (m._fileBlob) return m._fileBlob;
     if (!m.file_url) throw new Error(t('This file is no longer available.'));
-    const key = await messageKey(ch, m);
+    const key = await uploadKey(ch, m);
     const res = await fetch(m.file_url);
     if (!res.ok) throw new Error(t('This file is no longer available.'));
     markUploadViewed(m.id);
@@ -2027,7 +2045,7 @@ function hydrateEncryptedThumbs() {
         if (!m || m._thumbLoading || m._thumbBlob || !m.thumb_url) continue;
         m._thumbLoading = true;
         (async () => {
-            const key = await messageKey(cur, m);
+            const key = await uploadKey(cur, m);
             const res = await fetch(m.thumb_url);
             if (!res.ok) return;
             const plain = openBytes(new Uint8Array(await res.arrayBuffer()), key);
@@ -2637,6 +2655,10 @@ async function sendFile(e) {
         await sendSealedFile(cur, file);
         return;
     }
+    if (e2eeReady(store.detail)) {
+        await sendSealedPrivateFile(cur, file);
+        return;
+    }
     const fd = new FormData();
     fd.append('file', file);
     if (store.replyTo) fd.append('reply_to', store.replyTo.id);
@@ -2683,6 +2705,52 @@ async function sendSealedFile(cur, file) {
             if (replyTo) fd.append('reply_to', replyTo);
             return fd;
         });
+        if (cur.key !== store.current?.key) return;
+        store.replyTo = null;
+        renderReplyBar();
+        const message = cleanMessage(res.message);
+        message._plain = meta;
+        if (preview) message._thumbBlob = URL.createObjectURL(preview);
+        mergeMessages([message]);
+        renderMessages();
+    } catch (err) { toastError(err); }
+}
+
+/**
+ * Upload to a private conversation: the file and its preview are sealed with
+ * a fresh random key, and name, type, size and that key go out as an end-to-
+ * end encrypted message (Double Ratchet, or the per-message envelope while
+ * the partner's client cannot do the ratchet yet).
+ */
+async function sendSealedPrivateFile(cur, file) {
+    const kind = uploadKind(file);
+    if (!kind) { toastError({ message: t('Only images, audio, video and zip files are allowed.') }); return; }
+    const detail = store.detail;
+    const replyTo = store.replyTo?.id;
+    toastInfo(t('Uploading :name…', { name: file.name }));
+    try {
+        const key = newChannelKey();
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const preview = kind === 'image' ? await imageThumb(file)
+            : kind === 'video' ? await videoPoster(file).catch(() => null) : null;
+        const meta = JSON.stringify({ name: file.name, mime: file.type, size: file.size, k: b64(key) });
+
+        const ratchet = ratchetReady(detail);
+        if (ratchet) await ensureBoxKey(cur.server);
+        const body = ratchet
+            ? await sealPrivate(ratchetSelf(cur.server), cur.uuid, detail.devices, meta)
+            : encryptFor(meta, detail.devices);
+
+        const fd = new FormData();
+        fd.append('file', new Blob([sealBytes(bytes, key)]), 'sealed.bin');
+        if (preview) fd.append('thumb', new Blob([sealBytes(new Uint8Array(await preview.arrayBuffer()), key)]), 'preview.bin');
+        fd.append('kind', kind);
+        fd.append('encrypted', '1');
+        fd.append('body', body);
+        if (replyTo) fd.append('reply_to', replyTo);
+
+        const res = await api(`/channels/${cur.uuid}/messages`, { server: cur.server, body: fd });
+        if (ratchet) rememberPrivate(cur.server.id, cur.uuid, res.message.id, meta).catch(() => {});
         if (cur.key !== store.current?.key) return;
         store.replyTo = null;
         renderReplyBar();
