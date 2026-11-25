@@ -261,3 +261,9 @@ php artisan test
 
 See [DEPLOYMENT.md](DEPLOYMENT.md). Short version: push, then `git pull` on
 the host (assets are pre-built and committed, no Node.js needed there).
+
+## License
+
+Krotze is free software under the [GNU Affero General Public License v3.0](LICENSE)
+or (at your option) any later version. If you run a modified version on a
+server that others use, the AGPL requires you to offer them its source code.
