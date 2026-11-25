@@ -23,7 +23,7 @@
 set -euo pipefail
 
 REMOTE="${GITHUB_REMOTE:-https://github.com/michaelpapesch/krotze.git}"
-EXCLUDE=(HOSTING.md .github-export-deny)
+EXCLUDE=(HOSTING.md DEPLOYMENT.md CLAUDE.md .github-export-deny)
 MARK_BEGIN='BEGIN site-specific'
 MARK_END='END site-specific'
 DENY_FILE='.github-export-deny'

@@ -95,8 +95,8 @@ Live: https://krotze.com
   Extensions play VP8 or H.264 (e.g. Firefox for Android); voice works wherever
   AudioWorklet does, screen sharing is not
   available on phones, and leaving the channel ends your own stream. The
-  feature is off until the relay is configured (see *Live streams* in
-  [DEPLOYMENT.md](DEPLOYMENT.md)) and hides itself whenever it is not running.
+  feature is off until the relay is configured (`LIVE_URL` and friends, see
+  `.env.example`) and hides itself whenever it is not running.
 - **Retention** — every channel auto-deletes all content (messages, users,
   media, meta information) after N days of inactivity (default 7, max 365,
   owner-configurable). Uploads and abandoned identities expire too: an identity
@@ -263,8 +263,10 @@ php artisan test
 
 ## Deployment
 
-See [DEPLOYMENT.md](DEPLOYMENT.md). Short version: push, then `git pull` on
-the host (assets are pre-built and committed, no Node.js needed there).
+Push, then `git pull` on the host (assets are pre-built and committed, no
+Node.js needed there) and run `php artisan migrate --force` when migrations
+changed. Live streams additionally need `php artisan live:serve` running and
+`LIVE_URL` set (see `.env.example`).
 
 ## License
 
