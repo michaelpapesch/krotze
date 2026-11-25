@@ -268,10 +268,50 @@ the participants' devices; the server stores an opaque envelope it cannot read.
 - Encrypted messages carry `encrypted: true`; previews (`last_message`,
   reply excerpts, push bodies) have no text for them — render a placeholder.
 
-Group channels are not end-to-end encrypted (they are encrypted at rest
-server-side). And the standing caveat of any web client applies: the server
-serves the JavaScript, so E2EE here protects stored messages against database
-access and data requests, not against a malicious operator.
+### End-to-end encrypted channels
+
+Group channels with `e2ee: true` encrypt text **and uploads** with a symmetric
+*channel key*. Open-join channels can never be encrypted (anyone with the link
+would get the key); `e2ee` is set at creation (`POST /api/channels`) or
+switched on later (`PATCH`), never off.
+
+- **Epochs.** Each channel key belongs to an epoch (1, 2, …). The server keeps
+  the current epoch and a fingerprint of the device set it was made for: every
+  device of every *approved* member that has registered a box key. When that
+  set changes — a member joins, leaves or is removed, pairs or removes a
+  device, replaces its box key — a new epoch is due. A newcomer is therefore
+  only ever given keys from after their approval and cannot read earlier
+  messages; someone who left is not given the next key.
+- **Keys.** `GET /api/channels/{uuid}/keys` returns `epoch`, `rekey`, the
+  `devices` a new key must be wrapped for, and `keys`: this device's wraps,
+  one per epoch it was given. A wrap is
+  `{"v":2,"eph":…,"n":…,"k":…}` — the 32-byte key in an X25519 box from an
+  ephemeral key to the device's box key. Open it with your secret key; an
+  epoch without a wrap for your device is one you were not a member for.
+- **Starting an epoch.** Make 32 random bytes, wrap them for exactly the
+  listed `devices`, and `POST /api/channels/{uuid}/keys`
+  `{"epoch": current + 1, "wraps": {"<device public id>": "<wrap>", …}}`. A
+  409 (someone was faster, or the devices changed meanwhile) carries the fresh
+  key state — wrap again and retry.
+- **Messages.** The body is the channel envelope
+  `{"v":2,"e":<epoch>,"n":…,"ct":…}` (secretbox of the UTF-8 text, base64),
+  posted with `encrypted: true`. Plain text is refused (422). If a new epoch
+  is due the post fails with 409 `code: "rekey"`; if `e` is not the current
+  epoch, 409 `code: "stale_key"`. Start the epoch / reseal and post again.
+- **Uploads.** Multipart with `encrypted=1`, `kind` (`image`, `audio`,
+  `video`, `zip`), `file` = 24-byte nonce ‖ secretbox of the file bytes, an
+  optional `thumb` sealed the same way (a JPEG preview for images and videos —
+  the server cannot thumbnail ciphertext), and `body` = a channel envelope of
+  `{"name","mime","size"}`. The server stores the bytes as they are and serves
+  them through the usual `/u/{token}` capability URLs (CORS-enabled, so a
+  client on another origin can `fetch()` and decrypt them). Never trust the
+  sealed `mime` to render: it comes from another member.
+
+Previews (`last_message`, reply excerpts, push bodies) carry no text for
+encrypted messages, as in private conversations. And the standing caveat of
+any web client applies: the server serves the JavaScript, so E2EE here
+protects stored messages against database access and data requests, not
+against a malicious operator.
 
 ---
 

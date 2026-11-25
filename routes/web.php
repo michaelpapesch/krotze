@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\AdminController;
 use App\Http\Controllers\Admin\PasswordResetController;
 use App\Http\Controllers\Api\ChannelController;
+use App\Http\Controllers\Api\ChannelKeyController;
 use App\Http\Controllers\Api\DocsController;
 use App\Http\Controllers\Api\LiveController;
 use App\Http\Controllers\Api\MemberController;
@@ -230,6 +231,10 @@ Route::prefix('api')->group(function () {
         // decide who may stream and hand out the ticket that admits a member.
         Route::post('channels/{uuid}/members/{memberId}/role', [LiveController::class, 'setRole']);
         Route::post('channels/{uuid}/live', [LiveController::class, 'ticket'])->middleware('throttle:60,1');
+
+        // Keys of end-to-end encrypted group channels (wrapped per device).
+        Route::get('channels/{uuid}/keys', [ChannelKeyController::class, 'show']);
+        Route::post('channels/{uuid}/keys', [ChannelKeyController::class, 'store'])->middleware('throttle:30,1');
 
         Route::get('channels/{uuid}/messages', [MessageController::class, 'index']);
         Route::post('channels/{uuid}/messages', [MessageController::class, 'store']);

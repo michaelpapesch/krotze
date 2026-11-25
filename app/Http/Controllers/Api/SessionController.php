@@ -117,6 +117,7 @@ class SessionController extends Controller
                 'uuid' => $ch->uuid,
                 'name' => $name,
                 'type' => $ch->type,
+                'e2ee' => (bool) $ch->e2ee,
                 'status' => $m->status,
                 'username' => $user->username,
                 'is_owner' => $isOwner,

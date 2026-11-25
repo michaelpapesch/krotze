@@ -2,6 +2,16 @@
    English text is the key — see i18n.js. Keep keys identical across files. */
 
 export const fr = {
+    // Encrypted group channels
+    'Could not set up the channel key. Please try again.': 'Impossible de configurer la clé du canal. Veuillez réessayer.',
+    'This file is no longer available.': 'Ce fichier n’est plus disponible.',
+    'This file could not be decrypted.': 'Ce fichier n’a pas pu être déchiffré.',
+    'This file cannot be decrypted on this device.': 'Ce fichier ne peut pas être déchiffré sur cet appareil.',
+    'Only images, audio, video and zip files are allowed.': 'Seuls les images, l’audio, les vidéos et les fichiers zip sont autorisés.',
+    'End-to-end encrypted — messages and files can only be read on the members’ devices, and new members only see what is written after they join. Cannot be switched off later.': 'Chiffré de bout en bout — les messages et fichiers ne sont lisibles que sur les appareils des membres, et les nouveaux membres ne voient que ce qui est écrit après leur arrivée. Ne peut pas être désactivé ensuite.',
+    'Open channels are not end-to-end encrypted: anyone with the link would get the key.': 'Les canaux ouverts ne sont pas chiffrés de bout en bout : toute personne ayant le lien obtiendrait la clé.',
+    'This channel is end-to-end encrypted. That cannot be switched off, and it cannot be made open.': 'Ce canal est chiffré de bout en bout. Cela ne peut pas être désactivé, et il ne peut pas devenir ouvert.',
+    'Turn on end-to-end encryption — from then on messages and files can only be read on the members’ devices. Earlier messages stay as they are. Cannot be switched off.': 'Activer le chiffrement de bout en bout — dès lors, les messages et fichiers ne sont lisibles que sur les appareils des membres. Les messages précédents restent tels quels. Ne peut pas être désactivé.',
     'Waiting for approval': 'En attente d’approbation',
     'You registered as “:name”. An admin of this server has to approve you before you can chat. This page updates itself the moment that happens.': 'Vous êtes inscrit comme « :name ». Un administrateur de ce serveur doit vous approuver avant que vous puissiez discuter. Cette page se met à jour dès que c’est fait.',
     'An admin of this server has to approve your registration before you can chat. Pick the name they will see below.': 'Un administrateur de ce serveur doit approuver votre inscription avant que vous puissiez discuter. Choisissez ci-dessous le nom qu’il verra.',
@@ -361,6 +371,16 @@ export const fr = {
 };
 
 export const zh = {
+    // Encrypted group channels
+    'Could not set up the channel key. Please try again.': '无法设置频道密钥，请重试。',
+    'This file is no longer available.': '此文件已不可用。',
+    'This file could not be decrypted.': '此文件无法解密。',
+    'This file cannot be decrypted on this device.': '此文件无法在本设备上解密。',
+    'Only images, audio, video and zip files are allowed.': '只允许图片、音频、视频和 zip 文件。',
+    'End-to-end encrypted — messages and files can only be read on the members’ devices, and new members only see what is written after they join. Cannot be switched off later.': '端到端加密——消息和文件只能在成员的设备上读取，新成员只能看到其加入之后的内容。之后无法关闭。',
+    'Open channels are not end-to-end encrypted: anyone with the link would get the key.': '开放频道不进行端到端加密：任何拥有链接的人都会得到密钥。',
+    'This channel is end-to-end encrypted. That cannot be switched off, and it cannot be made open.': '此频道已启用端到端加密。无法关闭，也不能设为开放频道。',
+    'Turn on end-to-end encryption — from then on messages and files can only be read on the members’ devices. Earlier messages stay as they are. Cannot be switched off.': '开启端到端加密——此后消息和文件只能在成员的设备上读取。之前的消息保持不变。无法关闭。',
     'Waiting for approval': '等待批准',
     'You registered as “:name”. An admin of this server has to approve you before you can chat. This page updates itself the moment that happens.': '你已以“:name”注册。本服务器的管理员批准后你才能聊天。批准后此页面会自动更新。',
     'An admin of this server has to approve your registration before you can chat. Pick the name they will see below.': '本服务器的管理员批准你的注册后你才能聊天。请在下方选择管理员将看到的名字。',
@@ -720,6 +740,16 @@ export const zh = {
 };
 
 export const ar = {
+    // Encrypted group channels
+    'Could not set up the channel key. Please try again.': 'تعذّر إعداد مفتاح القناة. يُرجى المحاولة مرة أخرى.',
+    'This file is no longer available.': 'هذا الملف لم يعد متاحًا.',
+    'This file could not be decrypted.': 'تعذّر فك تشفير هذا الملف.',
+    'This file cannot be decrypted on this device.': 'لا يمكن فك تشفير هذا الملف على هذا الجهاز.',
+    'Only images, audio, video and zip files are allowed.': 'يُسمح فقط بالصور والصوت والفيديو وملفات zip.',
+    'End-to-end encrypted — messages and files can only be read on the members’ devices, and new members only see what is written after they join. Cannot be switched off later.': 'مشفّرة من طرف إلى طرف — لا يمكن قراءة الرسائل والملفات إلا على أجهزة الأعضاء، ولا يرى الأعضاء الجدد إلا ما يُكتب بعد انضمامهم. لا يمكن إيقافه لاحقًا.',
+    'Open channels are not end-to-end encrypted: anyone with the link would get the key.': 'القنوات المفتوحة ليست مشفّرة من طرف إلى طرف: كل من لديه الرابط سيحصل على المفتاح.',
+    'This channel is end-to-end encrypted. That cannot be switched off, and it cannot be made open.': 'هذه القناة مشفّرة من طرف إلى طرف. لا يمكن إيقاف ذلك، ولا يمكن جعلها مفتوحة.',
+    'Turn on end-to-end encryption — from then on messages and files can only be read on the members’ devices. Earlier messages stay as they are. Cannot be switched off.': 'تفعيل التشفير من طرف إلى طرف — بعدها لا يمكن قراءة الرسائل والملفات إلا على أجهزة الأعضاء. تبقى الرسائل السابقة كما هي. لا يمكن إيقافه.',
     'Waiting for approval': 'في انتظار الموافقة',
     'You registered as “:name”. An admin of this server has to approve you before you can chat. This page updates itself the moment that happens.': 'سجّلت باسم «:name». يجب أن يوافق عليك مسؤول هذا الخادم قبل أن تتمكن من الدردشة. تتحدث هذه الصفحة تلقائيًا لحظة حدوث ذلك.',
     'An admin of this server has to approve your registration before you can chat. Pick the name they will see below.': 'يجب أن يوافق مسؤول هذا الخادم على تسجيلك قبل أن تتمكن من الدردشة. اختر أدناه الاسم الذي سيراه.',
@@ -1079,6 +1109,16 @@ export const ar = {
 };
 
 export const fa = {
+    // Encrypted group channels
+    'Could not set up the channel key. Please try again.': 'تنظیم کلید کانال ممکن نشد. لطفاً دوباره تلاش کنید.',
+    'This file is no longer available.': 'این فایل دیگر در دسترس نیست.',
+    'This file could not be decrypted.': 'این فایل رمزگشایی نشد.',
+    'This file cannot be decrypted on this device.': 'این فایل روی این دستگاه رمزگشایی نمی‌شود.',
+    'Only images, audio, video and zip files are allowed.': 'فقط تصویر، صدا، ویدیو و فایل‌های zip مجاز هستند.',
+    'End-to-end encrypted — messages and files can only be read on the members’ devices, and new members only see what is written after they join. Cannot be switched off later.': 'رمزگذاری سرتاسری — پیام‌ها و فایل‌ها فقط روی دستگاه‌های اعضا خوانده می‌شوند و اعضای تازه فقط آنچه را پس از پیوستنشان نوشته می‌شود می‌بینند. بعداً خاموش نمی‌شود.',
+    'Open channels are not end-to-end encrypted: anyone with the link would get the key.': 'کانال‌های باز رمزگذاری سرتاسری ندارند: هر کس پیوند را داشته باشد کلید را می‌گیرد.',
+    'This channel is end-to-end encrypted. That cannot be switched off, and it cannot be made open.': 'این کانال رمزگذاری سرتاسری دارد. نمی‌توان آن را خاموش کرد و نمی‌توان کانال را باز کرد.',
+    'Turn on end-to-end encryption — from then on messages and files can only be read on the members’ devices. Earlier messages stay as they are. Cannot be switched off.': 'روشن کردن رمزگذاری سرتاسری — از آن پس پیام‌ها و فایل‌ها فقط روی دستگاه‌های اعضا خوانده می‌شوند. پیام‌های قبلی همان‌طور که هستند می‌مانند. خاموش نمی‌شود.',
     'Waiting for approval': 'در انتظار تأیید',
     'You registered as “:name”. An admin of this server has to approve you before you can chat. This page updates itself the moment that happens.': 'با نام «:name» ثبت‌نام کردید. پیش از آنکه بتوانید گفت‌وگو کنید، مدیر این سرور باید شما را تأیید کند. این صفحه به‌محض تأیید خودش به‌روز می‌شود.',
     'An admin of this server has to approve your registration before you can chat. Pick the name they will see below.': 'مدیر این سرور باید ثبت‌نام شما را تأیید کند تا بتوانید گفت‌وگو کنید. در پایین نامی را انتخاب کنید که او خواهد دید.',

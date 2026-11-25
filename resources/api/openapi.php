@@ -295,10 +295,25 @@ MD,
                 'encrypted' => $bool('True when the message is end-to-end encrypted and there is nothing to excerpt.'),
             ]),
 
+            'ChannelKeys' => $object([
+                'epoch' => $nullable('integer', 'The current epoch; null before the first.'),
+                'rekey' => $bool('A new epoch is due before the next message.'),
+                'devices' => ['type' => 'array', 'description' => 'Wrap targets for a new epoch: every keyed device of every approved member.',
+                    'items' => $object([
+                        'id' => $string('Device public id — the key of its wrap.'),
+                        'user_id' => $int(),
+                        'key' => $string('X25519 public key, base64.'),
+                    ])],
+                'keys' => ['type' => 'array', 'description' => 'This device\'s wraps, oldest epoch first.',
+                    'items' => $object(['epoch' => $int(), 'wrap' => $string()])],
+                'error' => $string('409 only.'),
+            ]),
+
             'StateChannel' => $object([
                 'uuid' => $string('', ['format' => 'uuid']),
                 'name' => $string('For a private conversation, the other participant.'),
                 'type' => $string('', ['enum' => ['group', 'private']]),
+                'e2ee' => $bool('Group channel whose messages and uploads are end-to-end encrypted with channel keys (see `GET /api/channels/{uuid}/keys`).'),
                 'status' => $string('Your membership.', ['enum' => ['pending', 'approved']]),
                 'username' => $string('Your own username.'),
                 'is_owner' => $bool(),
@@ -383,6 +398,8 @@ MD,
                 'allow_audio' => $bool(),
                 'allow_zip' => $bool(),
                 'restrict_delete' => $bool('When true only the uploader and the owner may delete a file.'),
+                'e2ee' => $bool('Group channels: messages and uploads are end-to-end encrypted with channel keys.'),
+                'key_epoch' => $nullable('integer', 'Current channel key epoch of an encrypted channel; null before the first.'),
                 'join_mode' => $string('`open` channels admit anyone with the invite link instantly.', ['enum' => ['approval', 'open']]),
                 'invite_url' => $nullable('string', 'Owners only.'),
                 'embed_url' => $nullable('string', 'Owners of open-join channels only: the `/embed/{token}` page to iframe.'),
@@ -640,6 +657,8 @@ MD,
                 'join_mode' => $string('`approval` (default): the owner approves every join request. `open`: anyone '
                     .'with the invite link joins instantly — this is what makes a channel embeddable, and it starts '
                     .'with every `allow_*` upload flag off.', ['enum' => ['approval', 'open']]),
+                'e2ee' => $bool('End-to-end encrypt the channel (default false; the Krotze app sends true for approval '
+                    .'channels). Refused together with `join_mode: open`.'),
             ], ['name'])),
             'responses' => [
                 '201' => $json('Created.', $object(['uuid' => $string('', ['format' => 'uuid']), 'invite_url' => $string()])),
@@ -668,6 +687,8 @@ MD,
                     'allow_audio' => $bool(),
                     'allow_zip' => $bool(),
                     'restrict_delete' => $bool('Only the uploader and the owner may delete a file.'),
+                    'e2ee' => $bool('Group channels: `true` switches end-to-end encryption on. It cannot be switched off, '
+                        .'and an encrypted channel cannot be made `open` (both 422).'),
                 ])),
                 'responses' => ['200' => $json('Saved.', $ref('Ok')), '404' => $errorRef('NotFound'), '422' => $errorRef('ValidationFailed')] + $signedErrors,
             ],
@@ -928,6 +949,44 @@ MD,
 
         /* --- messages --- */
 
+        '/api/channels/{uuid}/keys' => [
+            'get' => [
+                'tags' => ['Messages'], 'security' => $signed,
+                'summary' => 'Channel keys of an end-to-end encrypted channel',
+                'description' => 'Encrypted group channels (`e2ee`) use a symmetric **channel key** per *epoch*. A member device '
+                    .'creates it (32 random bytes) and wraps it for every device in `devices` with an ephemeral X25519 box; '
+                    ."the server stores the wraps and cannot open them.\n\n"
+                    .'`keys` are this device\'s wraps, one per epoch it was given — a member approved later gets none of the '
+                    .'epochs before, so it cannot read what was written before it joined. `rekey: true` means the member '
+                    .'devices changed (or there is no key yet): before the next message, start a new epoch with POST. '
+                    .'Message and wrap formats are described in docs/API.md (“End-to-end encrypted channels”).',
+                'parameters' => [$param('channelUuid')],
+                'responses' => [
+                    '200' => $json('Key state.', $ref('ChannelKeys')),
+                    '404' => $json('Not an approved member, or the channel is not encrypted.', $ref('Error')),
+                ] + $signedErrors,
+            ],
+            'post' => [
+                'tags' => ['Messages'], 'security' => $signed,
+                'summary' => 'Start a new channel key epoch',
+                'description' => '`epoch` must be the current one plus one, and `wraps` must hold exactly one wrap for every '
+                    .'device `GET` listed — no more, no fewer. If somebody else was faster, or the devices changed meanwhile, '
+                    .'the answer is 409 with the fresh state: build the wraps again and retry.',
+                'parameters' => [$param('channelUuid')],
+                'requestBody' => $body($object([
+                    'epoch' => $int(),
+                    'wraps' => ['type' => 'object', 'additionalProperties' => ['type' => 'string'],
+                        'description' => 'Device public id → wrap (JSON string, at most 512 characters).'],
+                ], ['epoch', 'wraps'])),
+                'responses' => [
+                    '201' => $json('Started; the fresh key state.', $ref('ChannelKeys')),
+                    '404' => $errorRef('NotFound'),
+                    '409' => $json('Wrong epoch or device list; the body also carries the fresh key state.', $ref('ChannelKeys')),
+                    '429' => $errorRef('TooManyRequests'),
+                ] + $signedErrors,
+            ],
+        ],
+
         '/api/channels/{uuid}/messages' => [
             'get' => [
                 'tags' => ['Messages'], 'security' => $signed,
@@ -962,20 +1021,30 @@ MD,
                     'content' => [
                         'application/json' => ['schema' => $object([
                             'body' => $string('Up to 5000 characters — or, with `encrypted: true`, the E2EE envelope (up to 64 KB).'),
-                            'encrypted' => $bool('Private conversations only: `body` is an end-to-end encrypted envelope '
-                                .'(see `POST /api/profile/devices/key` for the format). Rejected in group channels.'),
+                            'encrypted' => $bool('`body` is an end-to-end encrypted envelope: in private conversations the '
+                                .'per-message envelope (see `POST /api/profile/devices/key`), in `e2ee` group channels the channel '
+                                .'envelope `{v:2, e, n, ct}` (see `GET /api/channels/{uuid}/keys`). Required in `e2ee` channels, '
+                                .'refused in other group channels.'),
                             'reply_to' => $int('Id of a message in this channel to quote. Ignored if it does not exist.'),
                         ], ['body'])],
                         'multipart/form-data' => ['schema' => $object([
                             'file' => $string('The upload, max 50 MB.', ['format' => 'binary']),
-                            'thumb' => $string('Optional poster frame for a video, max 2 MB.', ['format' => 'binary']),
+                            'thumb' => $string('Optional poster frame for a video, max 2 MB. In `e2ee` channels: the sealed '
+                                .'thumbnail of an image or video, stored as it is.', ['format' => 'binary']),
                             'reply_to' => $int(),
+                            'encrypted' => $bool('`e2ee` channels only, and required there: `file` (and `thumb`) are sealed with '
+                                .'the channel key, and `body` is a channel envelope holding name, type and size.'),
+                            'kind' => $string('`e2ee` uploads only: what the sealed file is — the server cannot look.',
+                                ['enum' => ['image', 'audio', 'video', 'zip']]),
+                            'body' => $string('`e2ee` uploads only: the channel envelope with the file\'s metadata.'),
                         ], ['file'])],
                     ],
                 ],
                 'responses' => [
                     '201' => $json('Posted.', $object(['message' => $ref('Message')])),
                     '404' => $errorRef('NotFound'),
+                    '409' => $json('`e2ee` channels: `code` `rekey` — the member devices changed, start a new key epoch first; '
+                        .'`stale_key` — sealed with an old epoch (`epoch` names the current one).', $ref('Error')),
                     '422' => $json('Unsupported file type, a kind the channel disallows, or a body that did not validate.', $ref('Error')),
                     '429' => $json('Open-join channels only: posting is throttled per member (the owner is exempt) — slow down.', $ref('Error')),
                 ] + $signedErrors,

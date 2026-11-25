@@ -10,8 +10,8 @@
     "file": "assets/fonts-C9MNnjVw.css",
     "src": "_fonts-C9MNnjVw.css"
   },
-  "_i18n-DjiKDYju.js": {
-    "file": "assets/i18n-DjiKDYju.js",
+  "_i18n-DOugk-0V.js": {
+    "file": "assets/i18n-DOugk-0V.js",
     "name": "i18n"
   },
   "_instrument-sans-400-normal-D1W7dsQl.woff": {
@@ -43,7 +43,7 @@
     "name": "rolldown-runtime"
   },
   "resources/css/app.css": {
-    "file": "assets/app-D0B76jl8.css",
+    "file": "assets/app-CO5k-HNo.css",
     "name": "app",
     "names": [
       "app.css"
@@ -64,23 +64,23 @@
     ]
   },
   "resources/js/app.js": {
-    "file": "assets/app-D_b2XjA7.js",
+    "file": "assets/app-D8BfOFKD.js",
     "name": "app",
     "src": "resources/js/app.js",
     "isEntry": true,
     "imports": [
       "_rolldown-runtime-pP25SEvz.js",
       "_browser-0dIHh259.js",
-      "_i18n-DjiKDYju.js"
+      "_i18n-DOugk-0V.js"
     ]
   },
   "resources/js/embed.js": {
-    "file": "assets/embed-BfUNVI_1.js",
+    "file": "assets/embed-TgyjcfBo.js",
     "name": "embed",
     "src": "resources/js/embed.js",
     "isEntry": true,
     "imports": [
-      "_i18n-DjiKDYju.js"
+      "_i18n-DOugk-0V.js"
     ]
   },
   "resources/js/landing.js": {

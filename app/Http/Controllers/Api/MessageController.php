@@ -108,7 +108,26 @@ class MessageController extends Controller
         $replyToId = ($rid = (int) $request->input('reply_to'))
             ? $channel->messages()->where('id', $rid)->value('id') : null;
 
-        if ($request->hasFile('file')) {
+        // End-to-end encrypted group channels take only sealed content: the
+        // envelope must name the current key epoch, and none may be posted
+        // while a new epoch is due (the member devices changed) — that is
+        // what keeps a newcomer out of earlier messages and a leaver out of
+        // later ones.
+        if ($channel->e2ee) {
+            if (! $request->boolean('encrypted')) {
+                return response()->json(['error' => 'This channel is end-to-end encrypted. Update or reload the app.'], 422);
+            }
+            if ($refusal = $this->checkChannelEnvelope($channel, (string) $request->input('body'))) {
+                return $refusal;
+            }
+        }
+
+        if ($request->hasFile('file') && $channel->e2ee) {
+            $message = $this->storeEncryptedFile($request, $channel, $user, $replyToId);
+            if (! $message instanceof Message) {
+                return $message;
+            }
+        } elseif ($request->hasFile('file')) {
             $request->validate([
                 'file' => 'required|file|max:51200', // 50 MB
                 'thumb' => 'nullable|file|max:2048', // client-captured video poster
@@ -173,8 +192,8 @@ class MessageController extends Controller
             // ciphertext envelope with per-device wrapped keys — larger than
             // the text they hide, and opaque to the server by design.
             $encrypted = $request->boolean('encrypted');
-            if ($encrypted && $channel->type !== 'private') {
-                return response()->json(['error' => 'Only private conversations support end-to-end encryption.'], 422);
+            if ($encrypted && $channel->type !== 'private' && ! $channel->e2ee) {
+                return response()->json(['error' => 'This channel is not end-to-end encrypted.'], 422);
             }
             $data = $request->validate([
                 'body' => 'required|string|max:'.($encrypted ? 65535 : 5000),
@@ -247,6 +266,79 @@ class MessageController extends Controller
         ])->save();
 
         return response()->json(['ok' => true, 'deleted_by' => $user->displayName()]);
+    }
+
+    /**
+     * An upload to an end-to-end encrypted channel: the file (and the
+     * optional thumbnail) are ciphertext the client sealed with the channel
+     * key, and name, type and size travel inside the `body` envelope. The
+     * server stores the bytes as they are — it cannot thumbnail or inspect
+     * them — and trusts the declared `kind` only for the channel's upload
+     * switches.
+     */
+    private function storeEncryptedFile(Request $request, Channel $channel, ChatUser $user, ?int $replyToId)
+    {
+        $data = $request->validate([
+            'file' => 'required|file|max:51300',  // 50 MB plus the seal
+            'thumb' => 'nullable|file|max:2048',
+            'kind' => 'required|in:image,audio,video,zip',
+            'body' => 'required|string|max:4096',
+        ]);
+
+        $allowedFlag = ['image' => 'allow_images', 'video' => 'allow_videos',
+            'audio' => 'allow_audio', 'zip' => 'allow_zip'][$data['kind']];
+        if (! $channel->{$allowedFlag}) {
+            return response()->json(['error' => ucfirst($data['kind']).' uploads are disabled in this channel.'], 422);
+        }
+
+        $dir = 'uploads/'.$channel->uuid;
+        $name = Str::random(40);
+        $path = $request->file('file')->storeAs($dir, $name.'.bin', 'uploads');
+        $thumbPath = $request->hasFile('thumb')
+            ? $request->file('thumb')->storeAs($dir.'/thumbs', $name.'.bin', 'uploads')
+            : null;
+
+        return Message::create([
+            'channel_id' => $channel->id,
+            'user_id' => $user->id,
+            'author_alias' => $user->displayName(),
+            'kind' => $data['kind'],
+            'encrypted' => true,
+            'reply_to_id' => $replyToId,
+            'body' => $data['body'],
+            'file_path' => $path,
+            'thumb_path' => $thumbPath,
+            'file_mime' => 'application/octet-stream',
+            'file_size' => $request->file('file')->getSize(),
+        ]);
+    }
+
+    /**
+     * A channel envelope is `{"v":2,"e":<epoch>,"n":…,"ct":…}`. The server
+     * checks the version and the epoch — never anything it could not see
+     * anyway — and answers 409 with a `code` the client acts on.
+     */
+    private function checkChannelEnvelope(Channel $channel, string $body)
+    {
+        $envelope = json_decode($body, true);
+        if (! is_array($envelope) || ($envelope['v'] ?? null) !== 2 || ! is_int($envelope['e'] ?? null)) {
+            return response()->json(['error' => 'Not a channel envelope.'], 422);
+        }
+        if ($channel->needsNewKey()) {
+            return response()->json([
+                'error' => 'The channel members changed. A new channel key is needed first.',
+                'code' => 'rekey',
+            ], 409);
+        }
+        if ($envelope['e'] !== $channel->key_epoch) {
+            return response()->json([
+                'error' => 'This message was sealed with an old channel key.',
+                'code' => 'stale_key',
+                'epoch' => $channel->key_epoch,
+            ], 409);
+        }
+
+        return null;
     }
 
     private function makeThumb(string $srcAbs, string $channelUuid, string $storedPath, bool $force = false): ?string

@@ -75,7 +75,13 @@ Live: https://krotze.com
   with a per-message key wrapped for every participant device, and the
   server stores only the envelope. Devices paired later cannot read earlier
   messages (by design); previews and push bodies show a lock instead of
-  text. Group channels remain encrypted at rest only.
+  text.
+- **End-to-end encrypted channels** — group channels (except open-join ones)
+  encrypt messages and uploads with a channel key that every member device
+  receives wrapped for its own box key. The key changes whenever the member
+  devices change, so newcomers only read what is written after they joined
+  and leavers lose access to what follows. Previews are generated in the
+  browser; the server stores only ciphertext.
 - **Live streams: voice, video chat and screen sharing** — a channel owner can
   go live (📡 in the channel header) with voice only, the camera or a shared
   screen, and switch between them or mute while live. The owner can hand the

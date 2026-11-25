@@ -10,7 +10,7 @@ class Channel extends Model
     protected $fillable = [
         'uuid', 'name', 'type', 'owner_id', 'invite_token',
         'retention_days', 'last_activity_at', 'join_mode',
-        'allow_images', 'allow_videos', 'allow_audio', 'allow_zip', 'restrict_delete',
+        'allow_images', 'allow_videos', 'allow_audio', 'allow_zip', 'restrict_delete', 'e2ee',
     ];
 
     protected $casts = [
@@ -20,6 +20,8 @@ class Channel extends Model
         'allow_audio' => 'boolean',
         'allow_zip' => 'boolean',
         'restrict_delete' => 'boolean',
+        'e2ee' => 'boolean',
+        'key_epoch' => 'integer',
     ];
 
     public function members()
@@ -35,6 +37,11 @@ class Channel extends Model
     public function streams()
     {
         return $this->hasMany(Stream::class);
+    }
+
+    public function keys()
+    {
+        return $this->hasMany(ChannelKey::class);
     }
 
     public function owner()
@@ -55,6 +62,38 @@ class Channel extends Model
             ->implode('|'));
     }
 
+    /**
+     * The devices a channel key must be wrapped for: every device of every
+     * approved member that has registered a box key. Applicants are not in
+     * it — they get the key of the first epoch after their approval.
+     */
+    public function keyDevices()
+    {
+        return ChatDevice::whereIn('user_id', $this->members()->where('status', 'approved')->select('user_id'))
+            ->whereNotNull('public_key')
+            ->orderBy('id')
+            ->get();
+    }
+
+    /** Fingerprint of a device set: ids and keys, so a re-keyed device counts as a change too. */
+    public static function devicesHash(iterable $devices): string
+    {
+        return hash('sha256', collect($devices)
+            ->sortBy('public_id')
+            ->map(fn ($d) => $d->public_id.':'.$d->public_key)
+            ->implode('|'));
+    }
+
+    /**
+     * True when the next encrypted message needs a new epoch first: there is
+     * none yet, or the member devices changed since the current one was made.
+     */
+    public function needsNewKey(): bool
+    {
+        return $this->e2ee && ($this->key_epoch === null
+            || $this->key_devices_hash !== self::devicesHash($this->keyDevices()));
+    }
+
     public function touchActivity(): void
     {
         $this->forceFill(['last_activity_at' => now()])->saveQuietly();
@@ -67,6 +106,7 @@ class Channel extends Model
         UploadView::whereIn('message_id', $this->messages()->pluck('id'))->delete();
         $this->messages()->delete();
         $this->streams()->delete();
+        $this->keys()->delete();
         $this->members()->delete();
         $this->delete();
     }

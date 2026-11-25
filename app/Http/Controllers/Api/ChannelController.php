@@ -22,6 +22,7 @@ class ChannelController extends Controller
             'name' => 'required|string|max:60',
             'retention_days' => 'nullable|integer|min:1|max:365',
             'join_mode' => 'nullable|in:approval,open',
+            'e2ee' => 'nullable|boolean',
         ]);
 
         /** @var ChatUser $user */
@@ -32,6 +33,11 @@ class ChannelController extends Controller
         }
 
         $open = ($data['join_mode'] ?? 'approval') === 'open';
+        // Anyone with the link gets into an open channel at once — and so
+        // would get its key. End-to-end encryption would promise nothing there.
+        if ($open && ! empty($data['e2ee'])) {
+            return response()->json(['error' => 'Open channels cannot be end-to-end encrypted.'], 422);
+        }
 
         // Open-join channels start with all uploads disabled (anyone with the
         // link can join, so file sharing is opt-in for the owner).
@@ -47,6 +53,7 @@ class ChannelController extends Controller
             'allow_videos' => ! $open,
             'allow_audio' => ! $open,
             'allow_zip' => ! $open,
+            'e2ee' => ! empty($data['e2ee']),
             'last_activity_at' => now(),
         ]);
 
@@ -117,6 +124,8 @@ class ChannelController extends Controller
             'allow_audio' => $channel->allow_audio,
             'allow_zip' => $channel->allow_zip,
             'restrict_delete' => $channel->restrict_delete,
+            'e2ee' => $channel->e2ee,
+            'key_epoch' => $channel->key_epoch,
             'invite_url' => $isOwner && $channel->invite_token
                 ? url('/join/'.$channel->invite_token) : null,
             'embed_url' => $isOwner && $channel->invite_token && $channel->join_mode === 'open'
@@ -141,9 +150,24 @@ class ChannelController extends Controller
             'allow_audio' => 'sometimes|boolean',
             'allow_zip' => 'sometimes|boolean',
             'restrict_delete' => 'sometimes|boolean',
+            'e2ee' => 'sometimes|boolean',
         ]);
 
         abort_if(isset($data['join_mode']) && $channel->type !== 'group', 422);
+
+        // Encryption is one-way: switching it off would quietly put the next
+        // messages in clear text while members still see the lock. And it
+        // excludes open joining (see store()).
+        if (array_key_exists('e2ee', $data)) {
+            if (! $data['e2ee'] && $channel->e2ee) {
+                return response()->json(['error' => 'End-to-end encryption cannot be switched off.'], 422);
+            }
+            abort_if($data['e2ee'] && $channel->type !== 'group', 422);
+        }
+        $willBeOpen = ($data['join_mode'] ?? $channel->join_mode) === 'open';
+        if ($willBeOpen && ($data['e2ee'] ?? $channel->e2ee)) {
+            return response()->json(['error' => 'Open channels cannot be end-to-end encrypted.'], 422);
+        }
 
         // Switching to open join turns uploads off unless the request sets
         // them explicitly (the settings dialog always sends the flags).

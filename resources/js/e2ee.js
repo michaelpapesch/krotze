@@ -2,7 +2,8 @@ import nacl from 'tweetnacl';
 import { hex, sha256 } from './crypto.js';
 
 /* ------------------------------------------------------------------ */
-/* Krotze E2EE — private 1:1 conversations, text messages.             */
+/* Krotze E2EE — private 1:1 conversations (text messages) here, and   */
+/* encrypted group channels further down.                              */
 /*                                                                      */
 /* Each device holds an X25519 keypair; only the public half is ever    */
 /* uploaded. A message is encrypted once with a random key              */
@@ -92,6 +93,95 @@ export function safetyNumber(devices) {
     const keys = devices.map((d) => d.key).sort();
     const digest = hex(sha256(keys.join('|'))).toUpperCase().slice(0, 32);
     return digest.match(/.{4}/g).join(' ');
+}
+
+/* ------------------------------------------------------------------ */
+/* Group channels: one symmetric channel key per epoch.                 */
+/*                                                                      */
+/* A member device creates the key (32 random bytes) and wraps it for   */
+/* every member device with an ephemeral box; the server keeps the      */
+/* wraps and starts a new epoch whenever the member devices change.     */
+/*                                                                      */
+/*   wrap      {"v":2,"eph":…,"n":…,"k":…}     one per device           */
+/*   envelope  {"v":2,"e":epoch,"n":…,"ct":…}  message text, or a file's */
+/*             metadata {"name","mime","size"} as JSON                  */
+/*   file      nonce(24) ‖ secretbox(bytes)    uploads and thumbnails   */
+/* ------------------------------------------------------------------ */
+
+/** A fresh channel key. */
+export function newChannelKey() {
+    return nacl.randomBytes(nacl.secretbox.keyLength);
+}
+
+/** Wrap `key` for every device ([{id, key}]); returns { deviceId: wrapJson }. */
+export function wrapChannelKey(key, devices) {
+    const eph = nacl.box.keyPair();
+    const wraps = {};
+    for (const device of devices) {
+        const n = nacl.randomBytes(nacl.box.nonceLength);
+        wraps[device.id] = JSON.stringify({
+            v: 2,
+            eph: b64(eph.publicKey),
+            n: b64(n),
+            k: b64(nacl.box(key, n, b64d(device.key), eph.secretKey)),
+        });
+    }
+    return wraps;
+}
+
+/** Open a wrap meant for this device; null when it is not ours or broken. */
+export function unwrapChannelKey(wrapJson) {
+    try {
+        const w = JSON.parse(wrapJson);
+        if (w?.v !== 2) return null;
+        const key = nacl.box.open(b64d(w.k), b64d(w.n), b64d(w.eph), boxKeys().secretKey);
+        return key && key.length === nacl.secretbox.keyLength ? key : null;
+    } catch {
+        return null;
+    }
+}
+
+/** Seal text for a channel epoch; returns the envelope JSON. */
+export function sealForChannel(text, key, epoch) {
+    const n = nacl.randomBytes(nacl.secretbox.nonceLength);
+    return JSON.stringify({ v: 2, e: epoch, n: b64(n), ct: b64(nacl.secretbox(encoder.encode(text), n, key)) });
+}
+
+/** The epoch a channel envelope names, or null if it is not one. */
+export function channelEnvelopeEpoch(envelopeJson) {
+    try {
+        const env = JSON.parse(envelopeJson);
+        return env?.v === 2 && Number.isInteger(env.e) ? env.e : null;
+    } catch {
+        return null;
+    }
+}
+
+/** Open a channel envelope with its epoch's key; null when that fails. */
+export function openFromChannel(envelopeJson, key) {
+    try {
+        const env = JSON.parse(envelopeJson);
+        const plain = nacl.secretbox.open(b64d(env.ct), b64d(env.n), key);
+        return plain ? decoder.decode(plain) : null;
+    } catch {
+        return null;
+    }
+}
+
+/** Seal raw bytes (an upload): nonce followed by the secretbox. */
+export function sealBytes(bytes, key) {
+    const n = nacl.randomBytes(nacl.secretbox.nonceLength);
+    const box = nacl.secretbox(bytes, n, key);
+    const out = new Uint8Array(n.length + box.length);
+    out.set(n);
+    out.set(box, n.length);
+    return out;
+}
+
+/** Open what sealBytes() made; null when it is not authentic. */
+export function openBytes(sealed, key) {
+    if (sealed.length < nacl.secretbox.nonceLength + nacl.secretbox.overheadLength) return null;
+    return nacl.secretbox.open(sealed.subarray(nacl.secretbox.nonceLength), sealed.subarray(0, nacl.secretbox.nonceLength), key);
 }
 
 /**

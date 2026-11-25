@@ -18,7 +18,10 @@ return [
     |
     */
 
-    'paths' => ['api/*'],
+    // u/* too: encrypted uploads are fetched with fetch() and decrypted in
+    // the browser, also from servers other than the one the page came from.
+    // Those are capability URLs, sent without any credential.
+    'paths' => ['api/*', 'u/*'],
 
     'allowed_methods' => ['*'],
 

@@ -61,6 +61,16 @@ export function t(text, params = null) {
 /* ------------------------------ dictionaries ----------------------- */
 
 const de = {
+    // Encrypted group channels
+    'Could not set up the channel key. Please try again.': 'Der Kanalschlüssel konnte nicht eingerichtet werden. Bitte versuche es noch einmal.',
+    'This file is no longer available.': 'Diese Datei ist nicht mehr verfügbar.',
+    'This file could not be decrypted.': 'Diese Datei konnte nicht entschlüsselt werden.',
+    'This file cannot be decrypted on this device.': 'Diese Datei kann auf diesem Gerät nicht entschlüsselt werden.',
+    'Only images, audio, video and zip files are allowed.': 'Nur Bilder, Audio, Videos und Zip-Dateien sind erlaubt.',
+    'End-to-end encrypted — messages and files can only be read on the members’ devices, and new members only see what is written after they join. Cannot be switched off later.': 'Ende-zu-Ende-verschlüsselt — Nachrichten und Dateien sind nur auf den Geräten der Mitglieder lesbar, und neue Mitglieder sehen nur, was nach ihrem Beitritt geschrieben wird. Lässt sich später nicht abschalten.',
+    'Open channels are not end-to-end encrypted: anyone with the link would get the key.': 'Offene Kanäle sind nicht Ende-zu-Ende-verschlüsselt: Jeder mit dem Link bekäme den Schlüssel.',
+    'This channel is end-to-end encrypted. That cannot be switched off, and it cannot be made open.': 'Dieser Kanal ist Ende-zu-Ende-verschlüsselt. Das lässt sich nicht abschalten, und er kann nicht offen gemacht werden.',
+    'Turn on end-to-end encryption — from then on messages and files can only be read on the members’ devices. Earlier messages stay as they are. Cannot be switched off.': 'Ende-zu-Ende-Verschlüsselung einschalten — ab dann sind Nachrichten und Dateien nur auf den Geräten der Mitglieder lesbar. Frühere Nachrichten bleiben, wie sie sind. Lässt sich nicht abschalten.',
     // gates
     'Waiting for approval': 'Warten auf Freigabe',
     'You registered as “:name”. An admin of this server has to approve you before you can chat. This page updates itself the moment that happens.': 'Du hast dich als „:name“ registriert. Ein Admin dieses Servers muss dich freigeben, bevor du chatten kannst. Diese Seite aktualisiert sich, sobald das passiert.',
@@ -440,6 +450,16 @@ const de = {
 };
 
 const es = {
+    // Encrypted group channels
+    'Could not set up the channel key. Please try again.': 'No se pudo configurar la clave del canal. Inténtalo de nuevo.',
+    'This file is no longer available.': 'Este archivo ya no está disponible.',
+    'This file could not be decrypted.': 'No se pudo descifrar este archivo.',
+    'This file cannot be decrypted on this device.': 'Este archivo no se puede descifrar en este dispositivo.',
+    'Only images, audio, video and zip files are allowed.': 'Solo se permiten imágenes, audio, vídeos y archivos zip.',
+    'End-to-end encrypted — messages and files can only be read on the members’ devices, and new members only see what is written after they join. Cannot be switched off later.': 'Cifrado de extremo a extremo: los mensajes y archivos solo se pueden leer en los dispositivos de los miembros, y los nuevos miembros solo ven lo que se escribe después de unirse. No se puede desactivar más tarde.',
+    'Open channels are not end-to-end encrypted: anyone with the link would get the key.': 'Los canales abiertos no están cifrados de extremo a extremo: cualquiera con el enlace obtendría la clave.',
+    'This channel is end-to-end encrypted. That cannot be switched off, and it cannot be made open.': 'Este canal está cifrado de extremo a extremo. No se puede desactivar ni convertir en abierto.',
+    'Turn on end-to-end encryption — from then on messages and files can only be read on the members’ devices. Earlier messages stay as they are. Cannot be switched off.': 'Activar el cifrado de extremo a extremo: a partir de entonces, los mensajes y archivos solo se pueden leer en los dispositivos de los miembros. Los mensajes anteriores quedan como están. No se puede desactivar.',
     'Waiting for approval': 'Esperando aprobación',
     'You registered as “:name”. An admin of this server has to approve you before you can chat. This page updates itself the moment that happens.': 'Te registraste como «:name». Un administrador de este servidor debe aprobarte antes de que puedas chatear. Esta página se actualizará en cuanto ocurra.',
     'An admin of this server has to approve your registration before you can chat. Pick the name they will see below.': 'Un administrador de este servidor debe aprobar tu registro antes de que puedas chatear. Elige abajo el nombre que verá.',

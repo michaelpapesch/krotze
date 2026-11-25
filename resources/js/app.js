@@ -2,7 +2,10 @@ import QRCode from 'qrcode';
 import jsQR from 'jsqr';
 import { base32, hex, hmacSha256, open as unseal, randomBytes, seal, sha256 } from './crypto.js';
 import { LANGS, dir, getLang, setLang, t } from './i18n.js';
-import { boxPublicKey, decryptEnvelope, encryptFor, safetyNumber } from './e2ee.js';
+import {
+    boxPublicKey, channelEnvelopeEpoch, decryptEnvelope, encryptFor, newChannelKey, openBytes, openFromChannel,
+    safetyNumber, sealBytes, sealForChannel, unwrapChannelKey, wrapChannelKey,
+} from './e2ee.js';
 import { canCapture, canEncodeVideo, canShareScreen, initLive, liveMount, liveStart, liveStatus, liveSync, liveWatch } from './live.js';
 
 /* ------------------------------------------------------------------ */
@@ -1499,7 +1502,7 @@ function channelHeaderHtml(d) {
             <p class="font-semibold text-white truncate">${d.type === 'private' ? '👤 ' : '# '}${esc(d.name)}</p>
             <p class="text-xs text-zinc-500 truncate">${where}${d.type === 'private'
                 ? `${t('private conversation')}${e2eeReady(d) ? ' · 🔒 ' + t('end-to-end encrypted') : ''}`
-                : `${t('you are :name', { name: esc(d.server?.state.username || '') })}${d.is_owner ? ' · ' + t('owner') : ''}`}</p>
+                : `${t('you are :name', { name: esc(d.server?.state.username || '') })}${d.is_owner ? ' · ' + t('owner') : ''}${d.e2ee ? ' · 🔒 ' + t('end-to-end encrypted') : ''}`}</p>
         </div>
         ${liveOn && running && !live.connected ? `<button id="btn-watch" title="${t('Watch the live stream')}" class="shrink-0 rounded-lg border border-red-400/50 px-3 py-1.5 text-xs text-red-300 hover:bg-red-400/10">● ${t('Live')}</button>` : ''}
         ${liveOn && d.can_stream && !live.broadcasting && canCapture() ? `<button id="btn-live" title="${t('Go live')}" class="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/10">📡</button>` : ''}
@@ -1750,14 +1753,265 @@ function e2eeReady(d) {
         && d.devices.some((x) => x.user_id !== me);
 }
 
-/** Plaintext of a message — decrypts E2EE envelopes once and caches. */
+/**
+ * Plaintext of a message — decrypts E2EE envelopes once and caches. For an
+ * encrypted channel this is undefined while the channel key is still being
+ * fetched (the list re-renders when it arrives), null when it cannot be read.
+ */
 function plaintextOf(m) {
     if (!m.encrypted) return m.body;
     if (m._plain === undefined) {
-        const identity = store.current?.server.identity;
-        m._plain = identity ? decryptEnvelope(m.body, identity.id) : null;
+        if (channelEnvelopeEpoch(m.body) !== null) {
+            const text = openChannelEnvelope(m.body);
+            if (text === undefined) return undefined;
+            m._plain = text;
+        } else {
+            const identity = store.current?.server.identity;
+            m._plain = identity ? decryptEnvelope(m.body, identity.id) : null;
+        }
     }
     return m._plain;
+}
+
+/**
+ * Name, type and size of an upload. In an encrypted channel they travel
+ * sealed in the message body; undefined / null as for plaintextOf().
+ */
+function fileMeta(m) {
+    if (!m.encrypted) return { name: m.file_name, mime: m.file_mime, size: m.file_size };
+    const json = plaintextOf(m);
+    if (json === undefined || json === null) return json;
+    try {
+        const meta = JSON.parse(json);
+        return { name: String(meta.name || ''), mime: String(meta.mime || ''), size: Number(meta.size) || 0 };
+    } catch {
+        return null;
+    }
+}
+
+/* ---------------------- encrypted group channels ------------------- */
+
+// Per channel (composite key): the channel keys this device was given, by
+// epoch, and what the server said at the last fetch. Keys live in memory
+// only; the server keeps the wraps, so a reload fetches them again.
+const channelKeys = new Map();
+
+function keyEntry(chKey) {
+    let entry = channelKeys.get(chKey);
+    if (!entry) {
+        entry = { keys: new Map(), epoch: null, rekey: true, devices: [], fetchedAt: 0, loading: null };
+        channelKeys.set(chKey, entry);
+    }
+    return entry;
+}
+
+function absorbKeyState(entry, data) {
+    entry.epoch = Number.isInteger(data.epoch) ? data.epoch : null;
+    entry.rekey = !!data.rekey;
+    entry.devices = Array.isArray(data.devices) ? data.devices : [];
+    for (const k of data.keys || []) {
+        if (entry.keys.has(k.epoch)) continue;
+        const key = unwrapChannelKey(k.wrap);
+        if (key) entry.keys.set(k.epoch, key);
+    }
+    entry.fetchedAt = Date.now();
+}
+
+/** Fetch this device's channel keys (one request at a time per channel). */
+function loadChannelKeys(ch) {
+    const entry = keyEntry(ch.key);
+    entry.loading ||= api(`/channels/${ch.uuid}/keys`, { server: ch.server })
+        .then((data) => { absorbKeyState(entry, data); return entry; })
+        .finally(() => { entry.loading = null; });
+    return entry.loading;
+}
+
+/**
+ * Decrypt a channel envelope of the open channel. A key we do not hold yet
+ * is fetched (once — the server's answer is final for every epoch up to its
+ * current one: no wrap means this device was not a member then).
+ */
+function openChannelEnvelope(body) {
+    const cur = store.current;
+    const epoch = channelEnvelopeEpoch(body);
+    if (!cur || epoch === null) return null;
+    const entry = keyEntry(cur.key);
+    const key = entry.keys.get(epoch);
+    if (key) return openFromChannel(body, key);
+    if (entry.fetchedAt && entry.epoch !== null && epoch <= entry.epoch) return null;
+    // A newer epoch than we know of (another member just started one): ask
+    // the server again — at most every few seconds, also when it fails.
+    if (entry.loading || entry.scheduled) return undefined;
+    const run = () => loadChannelKeys(cur)
+        .then(() => { if (store.current?.key === cur.key) renderMessages(); })
+        .catch(() => {});
+    const wait = 3000 - (Date.now() - entry.fetchedAt);
+    if (wait > 0) {
+        entry.scheduled = setTimeout(() => { entry.scheduled = null; run(); }, wait);
+    } else {
+        run();
+    }
+    return undefined;
+}
+
+/** The key of the epoch a message was sealed with (fetching it if needed). */
+async function messageKey(ch, m) {
+    const epoch = channelEnvelopeEpoch(m.body);
+    const entry = keyEntry(ch.key);
+    if (!entry.keys.has(epoch)) await loadChannelKeys(ch);
+    const key = entry.keys.get(epoch);
+    if (!key) throw new Error(t('This message cannot be decrypted on this device.'));
+    return key;
+}
+
+/**
+ * The key to seal with right now. When the member devices changed (or there
+ * is no key yet) this device starts the next epoch: a fresh key, wrapped for
+ * every member device. A 409 means someone else was faster or the devices
+ * changed again — the answer carries the fresh state, so just go round again.
+ */
+async function channelSendKey(ch, refresh = false) {
+    await ensureBoxKey(ch.server);
+    let entry = keyEntry(ch.key);
+    if (refresh || !entry.fetchedAt || entry.rekey || !entry.keys.has(entry.epoch)) entry = await loadChannelKeys(ch);
+    for (let attempt = 0; entry.rekey || !entry.keys.has(entry.epoch); attempt++) {
+        if (attempt >= 4 || !entry.devices.length) throw new Error(t('Could not set up the channel key. Please try again.'));
+        const key = newChannelKey();
+        const epoch = (entry.epoch ?? 0) + 1;
+        try {
+            const data = await api(`/channels/${ch.uuid}/keys`, {
+                server: ch.server, body: { epoch, wraps: wrapChannelKey(key, entry.devices) },
+            });
+            entry.keys.set(epoch, key);
+            absorbKeyState(entry, data);
+        } catch (err) {
+            if (err.status !== 409 || !err.data) throw err;
+            absorbKeyState(entry, err.data);
+        }
+    }
+    return { epoch: entry.epoch, key: entry.keys.get(entry.epoch) };
+}
+
+/**
+ * Post to an encrypted channel. `build({epoch, key})` makes the request body
+ * (JSON object or FormData) sealed with that key; on 409 (a new epoch became
+ * due meanwhile) it is sealed again with the fresh key.
+ */
+async function postSealed(ch, build) {
+    for (let attempt = 0; ; attempt++) {
+        const sealed = await channelSendKey(ch, attempt > 0);
+        try {
+            return await api(`/channels/${ch.uuid}/messages`, { server: ch.server, body: build(sealed) });
+        } catch (err) {
+            if (err.status === 409 && attempt < 2) continue;
+            throw err;
+        }
+    }
+}
+
+/** What an upload of this file would be, or null when it is not allowed. */
+function uploadKind(file) {
+    const type = file.type || '';
+    for (const kind of ['image', 'audio', 'video']) if (type.startsWith(kind + '/')) return kind;
+    if (/^application\/(x-)?zip(-compressed)?$/.test(type) || /\.zip$/i.test(file.name)) return 'zip';
+    return null;
+}
+
+/**
+ * The media type a decrypted upload is served under. Never one a browser
+ * would run (HTML, SVG …): the declared type comes from another member.
+ */
+function safeBlobType(mime, kind) {
+    if (kind === 'image') return /^image\/(jpeg|png|gif|webp|avif)$/.test(mime) ? mime : 'image/jpeg';
+    if (kind === 'audio' || kind === 'video') return new RegExp(`^${kind}/[\\w.+-]+$`).test(mime) ? mime : `${kind}/mp4`;
+    return 'application/zip';
+}
+
+/** Fetch, decrypt and cache an encrypted upload; returns a blob: URL. */
+async function encryptedFileUrl(ch, m) {
+    if (m._fileBlob) return m._fileBlob;
+    if (!m.file_url) throw new Error(t('This file is no longer available.'));
+    const key = await messageKey(ch, m);
+    const res = await fetch(m.file_url);
+    if (!res.ok) throw new Error(t('This file is no longer available.'));
+    markUploadViewed(m.id);
+    const plain = openBytes(new Uint8Array(await res.arrayBuffer()), key);
+    if (!plain) throw new Error(t('This file could not be decrypted.'));
+    m._fileBlob = URL.createObjectURL(new Blob([plain], { type: safeBlobType(fileMeta(m)?.mime || '', m.kind) }));
+    return m._fileBlob;
+}
+
+/** Open an encrypted upload: lightbox, player or download. */
+async function openEncryptedUpload(id) {
+    const cur = store.current;
+    const m = store.messages.find((x) => x.id === id);
+    if (!cur || !m) return;
+    try {
+        const url = await encryptedFileUrl(cur, m);
+        if (store.current?.key !== cur.key) return;
+        if (m.kind === 'image') {
+            lightbox(url);
+        } else if (m.kind === 'zip') {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileMeta(m)?.name || 'download.zip';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } else {
+            m._autoplay = true;
+            renderMessages(); // the player now has its source
+        }
+    } catch (err) { toastError(err); }
+}
+
+/** Decrypt the thumbnails of encrypted uploads that are on screen. */
+function hydrateEncryptedThumbs() {
+    const cur = store.current;
+    if (!cur) return;
+    for (const img of document.querySelectorAll('#messages img[data-enc-thumb]')) {
+        const m = store.messages.find((x) => x.id === Number(img.dataset.encThumb));
+        if (!m || m._thumbLoading || m._thumbBlob || !m.thumb_url) continue;
+        m._thumbLoading = true;
+        (async () => {
+            const key = await messageKey(cur, m);
+            const res = await fetch(m.thumb_url);
+            if (!res.ok) return;
+            const plain = openBytes(new Uint8Array(await res.arrayBuffer()), key);
+            if (!plain) return;
+            m._thumbBlob = URL.createObjectURL(new Blob([plain], { type: 'image/jpeg' }));
+            if (store.current?.key !== cur.key) return;
+            for (const el of document.querySelectorAll(`#messages img[data-enc-thumb="${m.id}"]`)) {
+                el.src = m._thumbBlob;
+                el.classList.remove('hidden');
+            }
+            document.querySelectorAll(`#messages [data-enc-label="${m.id}"]`).forEach((el) => el.remove());
+        })().catch(() => {}).finally(() => { m._thumbLoading = false; });
+    }
+}
+
+/** Blob URLs of messages that are leaving the screen. */
+function releaseBlobs(messages) {
+    for (const m of messages) {
+        if (m._fileBlob) URL.revokeObjectURL(m._fileBlob);
+        if (m._thumbBlob) URL.revokeObjectURL(m._thumbBlob);
+    }
+}
+
+/** A JPEG preview of an image file for an encrypted upload (null on failure). */
+async function imageThumb(file, max = 480) {
+    try {
+        const bitmap = await createImageBitmap(file);
+        const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(bitmap.width * scale));
+        c.height = Math.max(1, Math.round(bitmap.height * scale));
+        c.getContext('2d').drawImage(bitmap, 0, 0, c.width, c.height);
+        bitmap.close?.();
+        return await new Promise((resolve) => c.toBlob((b) => resolve(b), 'image/jpeg', 0.8));
+    } catch {
+        return null;
+    }
 }
 
 /* ---------------------------- messages ---------------------------- */
@@ -1804,8 +2058,10 @@ async function loadMessages(initial = false) {
         if (cur.key !== store.current?.key) return;
         data.messages.forEach(cleanMessage);
         for (const del of data.deletions || []) flashDeleted(del.id, del.by);
-        if (initial) store.messages = data.messages;
-        else if (data.messages.length) mergeMessages(data.messages);
+        if (initial) {
+            releaseBlobs(store.messages);
+            store.messages = data.messages;
+        } else if (data.messages.length) mergeMessages(data.messages);
         else return;
         if (data.messages.length) {
             // The cursor only ever moves with what a poll returned: a message
@@ -1823,31 +2079,27 @@ async function loadMessages(initial = false) {
 function messageHtml(m) {
     const mine = m.user_id === store.userId;
     let content = '';
+    const sealedMeta = m.kind !== 'text' && m.encrypted ? fileMeta(m) : null;
     if (m.kind === 'text') {
         const text = plaintextOf(m);
-        content = text !== null
-            ? `<p class="whitespace-pre-wrap break-words text-sm">${esc(text)}</p>`
-            : `<p class="text-sm italic text-zinc-400">🔒 ${t('This message cannot be decrypted on this device.')}</p>`;
+        content = text === undefined
+            ? `<p class="text-sm italic text-zinc-400">🔒 ${t('Decrypting…')}</p>`
+            : text !== null
+                ? `<p class="whitespace-pre-wrap break-words text-sm">${esc(text)}</p>`
+                : `<p class="text-sm italic text-zinc-400">🔒 ${t('This message cannot be decrypted on this device.')}</p>`;
     } else if (m._flashDeleted) {
         content = `<p class="text-sm italic text-amber-300 animate-pulse">🗑 ${t('Deleted by :name', { name: esc(m._flashDeleted) })}</p>`;
     } else if (uploadExpired(m)) {
-        content = `<p class="text-sm italic text-zinc-400">⏱ ${esc(m.file_name || t('Upload'))} — ${t('no longer available')}</p>`;
+        content = `<p class="text-sm italic text-zinc-400">⏱ ${esc((m.encrypted ? sealedMeta?.name : m.file_name) || t('Upload'))} — ${t('no longer available')}</p>`;
+    } else if (m.encrypted && sealedMeta === undefined) {
+        content = `<p class="text-sm italic text-zinc-400">🔒 ${t('Decrypting…')}</p>`;
+    } else if (m.encrypted && !sealedMeta) {
+        content = `<p class="text-sm italic text-zinc-400">🔒 ${t('This file cannot be decrypted on this device.')}</p>`;
+    } else if (m.encrypted) {
+        content = sealedUploadHtml(m, sealedMeta);
     } else {
-        const mayDeleteFile = !store.detail?.restrict_delete || mine || store.detail?.is_owner;
-        const x = mayDeleteFile ? `<button data-del-file="${m.id}" title="${t('Delete this file for everyone')}"
-            class="absolute -top-2 -end-2 h-6 w-6 rounded-full bg-black/80 text-white text-xs border border-white/30 hover:bg-red-600 z-10">×</button>` : '';
-        // No countdown at all when the server neither expires uploads nor
-        // limits how long an opened one stays readable.
-        const days = store.uploadRetentionDays;
-        const mins = store.uploadViewMinutes;
-        const hint = [
-            days ? t(days === 1 ? 'Uploads disappear after :n day' : 'Uploads disappear after :n days', { n: days }) : '',
-            mins ? t('once opened, after :n min', { n: mins }) : '',
-        ].filter(Boolean).join('; ');
-        const timer = (m.file_expires_at || m.view_expires_at)
-            ? `<p class="mt-1 text-[11px] text-zinc-400" title="${esc(hint)}">
-                ⏱ <span data-upload-timer="${m.id}"></span></p>`
-            : '';
+        const x = uploadDeleteButton(m);
+        const timer = uploadTimerHtml(m);
         if (m.kind === 'image') {
             const media = m.thumb_url
                 ? `<img src="${esc(m.thumb_url)}" alt="${esc(m.file_name)}" data-lightbox="${esc(m.file_url)}" loading="lazy"
@@ -1894,6 +2146,68 @@ function messageHtml(m) {
                 </div>
             </div>
         </div>`;
+}
+
+/** The × on an upload, for whoever may delete it. */
+function uploadDeleteButton(m) {
+    const mayDeleteFile = !store.detail?.restrict_delete || m.user_id === store.userId || store.detail?.is_owner;
+    return mayDeleteFile ? `<button data-del-file="${m.id}" title="${t('Delete this file for everyone')}"
+        class="absolute -top-2 -end-2 h-6 w-6 rounded-full bg-black/80 text-white text-xs border border-white/30 hover:bg-red-600 z-10">×</button>` : '';
+}
+
+/** Countdown line of an upload (none when the server neither expires nor limits views). */
+function uploadTimerHtml(m) {
+    const days = store.uploadRetentionDays;
+    const mins = store.uploadViewMinutes;
+    const hint = [
+        days ? t(days === 1 ? 'Uploads disappear after :n day' : 'Uploads disappear after :n days', { n: days }) : '',
+        mins ? t('once opened, after :n min', { n: mins }) : '',
+    ].filter(Boolean).join('; ');
+    return (m.file_expires_at || m.view_expires_at)
+        ? `<p class="mt-1 text-[11px] text-zinc-400" title="${esc(hint)}">
+            ⏱ <span data-upload-timer="${m.id}"></span></p>`
+        : '';
+}
+
+/**
+ * An upload in an encrypted channel. Nothing is fetched until it is on
+ * screen (thumbnails, see hydrateEncryptedThumbs) or opened (the full file,
+ * which starts the view window like any other upload).
+ */
+function sealedUploadHtml(m, meta) {
+    const x = uploadDeleteButton(m);
+    const timer = uploadTimerHtml(m);
+    const label = `<span class="break-all min-w-0">${esc(meta.name || t('Upload'))}</span>
+        <span class="text-xs text-zinc-400 shrink-0">${fmtSize(meta.size)}</span>`;
+    const thumb = m.thumb_url
+        ? `<img data-enc-thumb="${m.id}" alt="${esc(meta.name)}" ${m._thumbBlob ? `src="${m._thumbBlob}"` : ''}
+               class="max-h-48 max-w-full rounded-lg object-contain ${m._thumbBlob ? '' : 'hidden'}">`
+        : '';
+    const button = (icon, body) => `<button data-enc-open="${m.id}"
+        class="flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm hover:bg-white/10">${icon} ${body}</button>`;
+
+    let media;
+    if (m.kind === 'image') {
+        media = m.thumb_url
+            ? `<button data-enc-open="${m.id}" class="block cursor-zoom-in">${thumb}${m._thumbBlob ? ''
+                : `<span data-enc-label="${m.id}" class="flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm">🖼 ${label}</span>`}</button>`
+            : button('🖼', label);
+    } else if ((m.kind === 'audio' || m.kind === 'video') && m._fileBlob) {
+        const tag = m.kind;
+        const auto = m._autoplay ? 'autoplay' : '';
+        m._autoplay = false;
+        media = tag === 'audio'
+            ? `<audio controls ${auto} src="${m._fileBlob}" class="max-w-full w-64"></audio>`
+            : `<video controls ${auto} playsinline ${m._thumbBlob ? `poster="${m._thumbBlob}"` : ''} src="${m._fileBlob}" class="max-h-64 max-w-full rounded-lg"></video>`;
+        media += `<p class="text-xs text-zinc-400 mt-1 break-all">${esc(meta.name)} · ${fmtSize(meta.size)}</p>`;
+    } else if (m.kind === 'video') {
+        media = `${m.thumb_url ? `<button data-enc-open="${m.id}" class="relative block">${thumb}
+                <span class="absolute inset-0 flex items-center justify-center text-4xl text-white/90 drop-shadow">▶</span></button>` : ''}
+            ${button('🎬', label)}`;
+    } else {
+        media = button(m.kind === 'audio' ? '▶ 🎵' : '🗜', label);
+    }
+    return `<div class="relative inline-block max-w-full">${x}${media}${timer}</div>`;
 }
 
 const KIND_ICON = { image: '🖼', audio: '🎵', video: '🎬', zip: '🗜' };
@@ -1974,6 +2288,7 @@ function renderMessages() {
     if (!box) return;
     box.innerHTML = store.messages.map(messageHtml).join('')
         || `<p class="text-center text-sm text-zinc-500 py-8">${t('No messages yet — say hi!')}</p>`;
+    hydrateEncryptedThumbs();
     updateUploadTimers();
     if (store.stickToBottom) box.scrollTop = box.scrollHeight;
     // Scrolling away pauses the auto-follow; scrolling back resumes it. The
@@ -2021,6 +2336,8 @@ function renderMessages() {
         if (suppressNextClick) { suppressNextClick = false; return; }
         const jump = e.target.closest('[data-jump]');
         if (jump) { jumpToMessage(Number(jump.dataset.jump)); return; }
+        const sealed = e.target.closest('[data-enc-open]');
+        if (sealed) { openEncryptedUpload(Number(sealed.dataset.encOpen)); return; }
         const lbEl = e.target.closest('[data-lightbox]');
         if (lbEl) {
             const row = lbEl.closest('[data-mid]');
@@ -2093,7 +2410,7 @@ function renderReplyBar() {
                 <p class="truncate text-xs font-semibold text-violet-300">↩ ${esc(m.username)}</p>
                 <p class="truncate text-xs text-zinc-400">${esc(quoteExcerpt({
                     kind: m.kind,
-                    excerpt: m.kind === 'text' ? (plaintextOf(m) || '').slice(0, 90) : m.file_name,
+                    excerpt: m.kind === 'text' ? (plaintextOf(m) || '').slice(0, 90) : (m.encrypted ? fileMeta(m)?.name : m.file_name),
                 }))}</p>
             </div>
             <button id="reply-cancel" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-400 hover:bg-white/10 hover:text-white">✕</button>
@@ -2222,13 +2539,17 @@ async function sendMessage(e) {
     if (store.replyTo) payload.reply_to = store.replyTo.id;
     // Private conversations go out end-to-end encrypted whenever both sides
     // have a keyed device; the server only ever sees the envelope.
-    const encrypt = e2eeReady(store.detail);
-    if (encrypt) {
+    // Encrypted group channels seal it with the current channel key.
+    const sealedChannel = store.detail.type === 'group' && store.detail.e2ee;
+    const encrypt = sealedChannel || e2eeReady(store.detail);
+    if (encrypt && !sealedChannel) {
         payload.body = encryptFor(body, store.detail.devices);
         payload.encrypted = true;
     }
     try {
-        const res = await api(`/channels/${cur.uuid}/messages`, { server: cur.server, body: payload });
+        const res = sealedChannel
+            ? await postSealed(cur, ({ epoch, key }) => ({ ...payload, body: sealForChannel(body, key, epoch), encrypted: true }))
+            : await api(`/channels/${cur.uuid}/messages`, { server: cur.server, body: payload });
         if (cur.key !== store.current?.key) return;
         store.replyTo = null;
         renderReplyBar();
@@ -2252,6 +2573,10 @@ async function sendFile(e) {
     if (file.size > 50 * 1048576) { toastError({ message: t('Maximum file size is 50 MB.') }); return; }
     const cur = store.current;
     if (!cur || store.detail?.key !== cur.key) return; // still switching channels
+    if (store.detail.type === 'group' && store.detail.e2ee) {
+        await sendSealedFile(cur, file);
+        return;
+    }
     const fd = new FormData();
     fd.append('file', file);
     if (store.replyTo) fd.append('reply_to', store.replyTo.id);
@@ -2267,6 +2592,44 @@ async function sendFile(e) {
         store.replyTo = null;
         renderReplyBar();
         mergeMessages([cleanMessage(res.message)]);
+        renderMessages();
+    } catch (err) { toastError(err); }
+}
+
+/**
+ * Upload to an encrypted channel: the file and its preview are sealed here
+ * with the channel key, and name, type and size go inside the sealed body —
+ * the server stores bytes it cannot read and makes no thumbnail of its own.
+ */
+async function sendSealedFile(cur, file) {
+    const kind = uploadKind(file);
+    if (!kind) { toastError({ message: t('Only images, audio, video and zip files are allowed.') }); return; }
+    const replyTo = store.replyTo?.id;
+    toastInfo(t('Uploading :name…', { name: file.name }));
+    try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const preview = kind === 'image' ? await imageThumb(file)
+            : kind === 'video' ? await videoPoster(file).catch(() => null) : null;
+        const previewBytes = preview ? new Uint8Array(await preview.arrayBuffer()) : null;
+        const meta = JSON.stringify({ name: file.name, mime: file.type, size: file.size });
+
+        const res = await postSealed(cur, ({ epoch, key }) => {
+            const fd = new FormData();
+            fd.append('file', new Blob([sealBytes(bytes, key)]), 'sealed.bin');
+            if (previewBytes) fd.append('thumb', new Blob([sealBytes(previewBytes, key)]), 'preview.bin');
+            fd.append('kind', kind);
+            fd.append('encrypted', '1');
+            fd.append('body', sealForChannel(meta, key, epoch));
+            if (replyTo) fd.append('reply_to', replyTo);
+            return fd;
+        });
+        if (cur.key !== store.current?.key) return;
+        store.replyTo = null;
+        renderReplyBar();
+        const message = cleanMessage(res.message);
+        message._plain = meta;
+        if (preview) message._thumbBlob = URL.createObjectURL(preview);
+        mergeMessages([message]);
         renderMessages();
     } catch (err) { toastError(err); }
 }
@@ -2335,9 +2698,14 @@ async function createChannelDialog(server = store.server) {
                     class="mt-1 w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-white focus:border-violet-500 focus:outline-none">
             </div>
             <label class="flex cursor-pointer items-start gap-2 text-sm text-zinc-200">
+                <input type="checkbox" name="e2ee" checked class="mt-0.5 accent-violet-500">
+                <span>🔒 ${t('End-to-end encrypted — messages and files can only be read on the members’ devices, and new members only see what is written after they join. Cannot be switched off later.')}</span>
+            </label>
+            <label class="flex cursor-pointer items-start gap-2 text-sm text-zinc-200">
                 <input type="checkbox" name="join_open" class="mt-0.5 accent-violet-500">
                 <span>${t('Open join — anyone with the invite link joins instantly, no approval. Needed for embedding the chat on a website; uploads start disabled.')}</span>
             </label>
+            <p id="cc-open-note" class="hidden text-xs text-amber-300">${t('Open channels are not end-to-end encrypted: anyone with the link would get the key.')}</p>
             <div class="flex justify-end gap-3 pt-2">
                 <button type="button" data-cancel class="rounded-lg border border-white/20 px-4 py-2 text-sm hover:bg-white/10">${t('Cancel')}</button>
                 <button class="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500">${t('Create')}</button>
@@ -2353,6 +2721,13 @@ async function createChannelDialog(server = store.server) {
             m.querySelector('#cc-as').innerHTML = t('You will appear as :name.', { name: `<b class="text-zinc-300">${esc(server.state.username || '')}</b>` });
         };
     }
+    // Open join and encryption exclude each other (anyone could get the key).
+    const ccE2ee = m.querySelector('[name="e2ee"]');
+    m.querySelector('[name="join_open"]').onchange = (e) => {
+        ccE2ee.disabled = e.target.checked;
+        if (e.target.checked) ccE2ee.checked = false;
+        m.querySelector('#cc-open-note').classList.toggle('hidden', !e.target.checked);
+    };
     m.querySelector('#cc-form').onsubmit = async (e) => {
         e.preventDefault();
         const fd = new FormData(e.target);
@@ -2361,6 +2736,7 @@ async function createChannelDialog(server = store.server) {
                 name: fd.get('name'),
                 retention_days: Number(fd.get('retention_days')) || 7,
                 join_mode: fd.get('join_open') ? 'open' : 'approval',
+                e2ee: !fd.get('join_open') && !!fd.get('e2ee'),
             } });
             m.remove();
             await refreshState({ only: server });
@@ -2523,10 +2899,16 @@ function channelConfigDialog(d) {
                 <input type="checkbox" name="restrict_delete" ${d.restrict_delete ? 'checked' : ''} class="mt-0.5 accent-violet-500">
                 <span>${t('Only file owners and the channel owner can delete their files and messages')}</span>
             </label>
+            ${d.e2ee ? `
+            <p class="text-sm text-zinc-300">🔒 ${t('This channel is end-to-end encrypted. That cannot be switched off, and it cannot be made open.')}</p>` : `
             <label class="flex cursor-pointer items-start gap-2 text-sm text-zinc-200">
                 <input type="checkbox" name="join_open" ${d.join_mode === 'open' ? 'checked' : ''} class="mt-0.5 accent-violet-500">
                 <span>${t('Open join — anyone with the invite link joins instantly, no approval. Needed for embedding the chat on a website.')}</span>
             </label>
+            <label class="flex cursor-pointer items-start gap-2 text-sm text-zinc-200">
+                <input type="checkbox" name="e2ee" ${d.join_mode === 'open' ? 'disabled' : ''} class="mt-0.5 accent-violet-500">
+                <span>🔒 ${t('Turn on end-to-end encryption — from then on messages and files can only be read on the members’ devices. Earlier messages stay as they are. Cannot be switched off.')}</span>
+            </label>`}
             <div class="flex justify-end gap-3 pt-2">
                 <button type="button" data-cancel class="rounded-lg border border-white/20 px-4 py-2 text-sm hover:bg-white/10">${t('Cancel')}</button>
                 <button class="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500">${t('Save')}</button>
@@ -2535,7 +2917,11 @@ function channelConfigDialog(d) {
     m.querySelector('[data-cancel]').onclick = () => m.remove();
     // Enabling open join defaults uploads to off (the owner can re-check them
     // before saving — this just makes the consequence visible).
-    m.querySelector('[name="join_open"]').onchange = (e) => {
+    const joinOpen = m.querySelector('[name="join_open"]');
+    if (joinOpen) joinOpen.onchange = (e) => {
+        const e2eeBox = m.querySelector('[name="e2ee"]');
+        e2eeBox.disabled = e.target.checked;
+        if (e.target.checked) e2eeBox.checked = false;
         if (e.target.checked && d.join_mode !== 'open') {
             for (const n of ['allow_images', 'allow_videos', 'allow_audio', 'allow_zip']) {
                 m.querySelector(`[name="${n}"]`).checked = false;
@@ -2550,7 +2936,8 @@ function channelConfigDialog(d) {
             await api(`/channels/${d.uuid}`, { method: 'PATCH', server: d.server, body: {
                 name: fd.get('name'),
                 retention_days: Number(fd.get('retention_days')),
-                join_mode: fd.get('join_open') ? 'open' : 'approval',
+                join_mode: d.e2ee ? 'approval' : (fd.get('join_open') ? 'open' : 'approval'),
+                ...(!d.e2ee && fd.get('e2ee') && !fd.get('join_open') ? { e2ee: true } : {}),
                 allow_images: !!fd.get('allow_images'),
                 allow_videos: !!fd.get('allow_videos'),
                 allow_audio: !!fd.get('allow_audio'),
