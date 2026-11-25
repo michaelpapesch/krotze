@@ -25,7 +25,10 @@ return [
     |
     */
 
-    'version' => '2.16.3',
+    'version' => '2.16.4',
+
+    // Public source repository, linked from the site navigation and landing page.
+    'source_url' => env('SOURCE_URL', 'https://github.com/michaelpapesch/krotze'),
 
     // Address shown for abuse reports (create the mailbox on the mail host!)
     'abuse_email' => env('ABUSE_EMAIL', 'abuse@krotze.com'),

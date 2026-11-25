@@ -5,7 +5,7 @@
 return [
 
     'meta' => [
-        'title_default' => 'Krotze — Chat anónimo',
+        'title_default' => 'Krotze — Chat anónimo de código abierto',
         'description' => 'Krotze — chats de grupo anónimos y privados. Sin registro, sin rastreo. Crea un canal, comparte un código QR, chatea.',
     ],
 
@@ -42,6 +42,7 @@ return [
         'feature2_text' => 'Cada canal se borra a sí mismo — mensajes, medios, miembros — tras 7 días de inactividad (configurable hasta 365 días).',
         'feature3_title' => '📎 Multimedia',
         'feature3_text' => 'Comparte imágenes, mensajes de voz, vídeos y archivos zip. Cualquiera puede eliminar un archivo; los propietarios pueden borrarlo todo.',
+        'open_source_html' => 'Krotze es de código abierto: lee el código, ejecuta tu propio servidor o contribuye en :link.',
     ],
 
     'contact' => [
@@ -156,6 +157,7 @@ return [
             ['q' => '¿Puedo estar en varios servidores Krotze a la vez?', 'a' => 'Sí. En «Servidores» dentro de la app, añade cualquier otro servidor Krotze por su dirección — o escanea o pega un enlace de invitación de ese servidor, y la app te propone añadirlo. En cada servidor obtienes una identidad y un nombre de usuario propios; no se comparte nada entre ellos. Los canales de todos los servidores aparecen en una sola lista, cada uno con una etiqueta de color que indica dónde vive, y puedes dar a cada servidor un apodo y un color. Los chats no leídos siempre van arriba.'],
             ['q' => '¿Las notificaciones funcionan también con los otros servidores?', 'a' => 'Sí. Un navegador solo puede tener una suscripción push, ligada al sitio desde el que instalaste Krotze: tu servidor principal. Por eso los demás servidores entregan sus notificaciones a tu servidor principal, que las reenvía a tu dispositivo. Este solo ve lo que el otro servidor pone en la notificación (un título y una vista previa, o solo «mensaje nuevo» si ocultas el texto), nunca tu identidad ni tus mensajes allí. Un servidor con un Krotze antiguo no puede reenviar; sus notificaciones te llegan igualmente mientras la app está abierta.'],
             ['q' => '¿Hay llamadas de voz y vídeo?', 'a' => 'Sí: emisiones en directo. El propietario de un canal puede emitir voz, cámara o su pantalla, y puede dar a otros miembros el derecho a emitir; en una conversación privada pueden hacerlo ambas partes. Una emisión en curso se abre sola para todos los que tengan el canal abierto, y cualquier imagen puede verse a pantalla completa. Las emisiones se retransmiten a través del servidor: los dispositivos nunca se conectan entre sí, así que los demás miembros no conocen tu dirección IP. Los límites, con honestidad: las emisiones no están cifradas de extremo a extremo (el servidor reenvía el audio y el vídeo, sin grabarlos), y el vídeo necesita un navegador actual.'],
+            ['q' => '¿Krotze es de código abierto?', 'a' => 'Sí. El código fuente completo —servidor, app y este sitio web— es público en GitHub: https://github.com/michaelpapesch/krotze. Puedes comprobar qué hace el servidor con tus datos, informar de problemas, contribuir o ejecutar tu propio servidor Krotze. Una nota honesta: el código publicado muestra lo que hace Krotze, no lo que ejecuta cada operador; si necesitas esa certeza, alójalo tú mismo.'],
         ],
     ],
 

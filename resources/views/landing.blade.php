@@ -39,6 +39,9 @@
         <p class="mt-4 text-lg text-zinc-400 break-words">
             {{ __('site.landing.intro') }}
         </p>
+        <p class="mt-3 text-sm text-zinc-400 break-words">
+            {!! __('site.landing.open_source_html', ['link' => '<a href="'.e(config('app.source_url')).'" rel="noopener" class="text-violet-300 underline hover:text-violet-200">GitHub</a>']) !!}
+        </p>
 
         <div class="mt-8 flex flex-wrap items-center justify-center gap-4">
             @if ($openRegistrations)

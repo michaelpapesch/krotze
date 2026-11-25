@@ -5,7 +5,7 @@
 return [
 
     'meta' => [
-        'title_default' => 'Krotze — Anonymous Chat',
+        'title_default' => 'Krotze — Anonymous Chat, Open Source',
         'description' => 'Krotze — anonymous, private group chats. No registration, no tracking. Create a channel, share a QR code, chat.',
     ],
 
@@ -42,6 +42,7 @@ return [
         'feature2_text' => 'Every channel wipes itself — messages, media, members — after 7 days of inactivity (configurable up to 365 days).',
         'feature3_title' => '📎 Rich media',
         'feature3_text' => 'Share images, voice messages, videos and zip archives. Anyone can remove a file; owners can wipe everything.',
+        'open_source_html' => 'Krotze is open source — read the code, run your own server or contribute on :link.',
     ],
 
     'contact' => [
@@ -156,6 +157,7 @@ return [
             ['q' => 'Can I be on several Krotze servers at once?', 'a' => 'Yes. Under “Servers” in the app, add any other Krotze server by its address — or scan or paste an invite link from that server, and the app offers to add it. You get a separate identity and username on each server; nothing is shared between them. Channels from every server appear in one list, each with a coloured tag showing where it lives, and you can give every server a nickname and a colour of your own. Unread chats always sit on top.'],
             ['q' => 'Do notifications work for the other servers too?', 'a' => 'Yes. A browser can hold only one push subscription, bound to the site you installed Krotze from — your home server. The other servers therefore hand their notifications to your home server, which forwards them to your device. It sees only what the other server puts in the notification (a title and a preview, or just “new message” if you hide message text), never your identity or messages there. A server running an older Krotze cannot relay; you still get its notifications while the app is open.'],
             ['q' => 'Are there voice and video calls?', 'a' => 'Yes — live streams. A channel owner can go live with voice, camera or a shared screen, and can give other members the right to stream too; in a private conversation both sides can. A running stream opens by itself for everyone who has the channel open, and any picture can be viewed fullscreen. Streams are relayed through the server: devices never connect to each other, so other members do not learn your IP address. The honest limits: streams are not end-to-end encrypted (the server passes the audio and video along, without recording it), and video needs a current browser.'],
+            ['q' => 'Is Krotze open source?', 'a' => 'Yes. The complete source code — server, app and this website — is public on GitHub: https://github.com/michaelpapesch/krotze. You can check what the server does with your data, report problems, contribute, or run your own Krotze server. One honest note: the published code shows what Krotze does, not what every operator runs — if you need that certainty, host it yourself.'],
         ],
     ],
 

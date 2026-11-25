@@ -5,7 +5,7 @@
 return [
 
     'meta' => [
-        'title_default' => 'Krotze — Anonymer Chat',
+        'title_default' => 'Krotze — Anonymer Chat, Open Source',
         'description' => 'Krotze — anonyme, private Gruppenchats. Ohne Registrierung, ohne Tracking. Channel erstellen, QR-Code teilen, chatten.',
     ],
 
@@ -42,6 +42,7 @@ return [
         'feature2_text' => 'Jeder Channel löscht sich selbst — Nachrichten, Medien, Mitglieder — nach 7 Tagen Inaktivität (einstellbar bis 365 Tage).',
         'feature3_title' => '📎 Medien inklusive',
         'feature3_text' => 'Teile Bilder, Sprachnachrichten, Videos und Zip-Archive. Jeder kann eine Datei entfernen; Besitzer können alles löschen.',
+        'open_source_html' => 'Krotze ist Open Source — lies den Code, betreibe deinen eigenen Server oder mach mit auf :link.',
     ],
 
     'contact' => [
@@ -156,6 +157,7 @@ return [
             ['q' => 'Kann ich auf mehreren Krotze-Servern gleichzeitig sein?', 'a' => 'Ja. Füge unter „Server“ in der App jeden anderen Krotze-Server über seine Adresse hinzu — oder scanne bzw. füge einen Einladungslink von diesem Server ein, dann bietet die App das Hinzufügen an. Auf jedem Server bekommst du eine eigene Identität mit eigenem Benutzernamen; nichts wird zwischen ihnen geteilt. Die Channels aller Server erscheinen in einer Liste, jeder mit einem farbigen Kürzel, das zeigt, wo er liegt, und du kannst jedem Server einen Spitznamen und eine Farbe geben. Ungelesene Chats stehen immer oben.'],
             ['q' => 'Funktionieren Benachrichtigungen auch für die anderen Server?', 'a' => 'Ja. Ein Browser kann nur ein Push-Abonnement halten, gebunden an die Seite, von der du Krotze installiert hast — deinen Heimatserver. Die anderen Server übergeben ihre Benachrichtigungen deshalb an den Heimatserver, der sie an dein Gerät weiterleitet. Er sieht nur, was der andere Server in die Benachrichtigung schreibt (einen Titel und eine Vorschau, oder nur „neue Nachricht“, wenn du den Nachrichtentext verbirgst), nie deine Identität oder Nachrichten dort. Ein Server mit einem älteren Krotze kann nicht weiterleiten; seine Benachrichtigungen bekommst du trotzdem, solange die App offen ist.'],
             ['q' => 'Gibt es Sprach- und Videoanrufe?', 'a' => 'Ja – Livestreams. Der Besitzer eines Kanals kann mit Sprache, Kamera oder geteiltem Bildschirm live gehen und anderen Mitgliedern ebenfalls das Recht zum Streamen geben; in einer privaten Unterhaltung können es beide Seiten. Ein laufender Stream öffnet sich von selbst bei allen, die den Kanal geöffnet haben, und jedes Bild lässt sich im Vollbild ansehen. Streams werden über den Server weitergeleitet: Geräte verbinden sich nie direkt miteinander, andere Mitglieder erfahren deine IP-Adresse also nicht. Die ehrlichen Grenzen: Streams sind nicht Ende-zu-Ende-verschlüsselt (der Server reicht Ton und Bild weiter, ohne sie aufzuzeichnen), und Video braucht einen aktuellen Browser.'],
+            ['q' => 'Ist Krotze Open Source?', 'a' => 'Ja. Der komplette Quellcode — Server, App und diese Website — ist öffentlich auf GitHub: https://github.com/michaelpapesch/krotze. Du kannst nachprüfen, was der Server mit deinen Daten macht, Fehler melden, mitentwickeln oder deinen eigenen Krotze-Server betreiben. Ehrlicherweise: Der veröffentlichte Code zeigt, was Krotze tut, nicht, was jeder Betreiber tatsächlich laufen lässt — wer diese Gewissheit braucht, hostet selbst.'],
         ],
     ],
 
